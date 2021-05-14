@@ -8,128 +8,289 @@ var scalarTestCases = []testCase{
 	//
 	// Test Case
 	//
-	{`Set and updated a field`,
-		`kind: Deployment`,
-		`kind: StatefulSet`,
-		`kind: Deployment`,
-		`kind: StatefulSet`, nil},
+	{
+		description: `Set and updated a field`,
+		origin:      `kind: Deployment`,
+		update:      `kind: StatefulSet`,
+		local:       `kind: Deployment`,
+		expected:    `kind: StatefulSet`},
 
-	{`Add an updated field`,
-		`
+	{
+		description: `Add an updated field`,
+		origin: `
 apiVersion: apps/v1
 kind: Deployment # old value`,
-		`
+		update: `
 apiVersion: apps/v1
 kind: StatefulSet # new value`,
-		`
+		local: `
 apiVersion: apps/v1`,
-		`
+		expected: `
 apiVersion: apps/v1
-kind: StatefulSet # new value`, nil},
+kind: StatefulSet # new value`},
 
-	{`Add keep an omitted field`,
-		`
+	//
+	// Test Case
+	//
+	{
+		description: `Ensure comments are added`,
+		origin: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'dest'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3`,
+		update: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'updated'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas"}`,
+		local: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'original'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3
+`,
+		expected: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'updated'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas"}
+`},
+
+	//
+	// Test Case
+	//
+	{
+		description: `Ensure comments are updated`,
+		origin: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'dest'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas"}`,
+		update: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'updated'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas_new"}`,
+		local: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'original'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas"}
+`,
+		expected: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'updated'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas_new"}
+`},
+
+	{
+		description: `Ensure deleted comments are not updated`,
+		origin: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'dest'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas"}`,
+		update: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'updated'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 3 # {"$openapi":"replicas"}`,
+		local: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'original'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 4
+`,
+		expected: `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/merge-source: 'updated'
+    config.kubernetes.io/path: 'temp.yaml'
+spec:
+  replicas: 4
+`},
+
+	{
+		description: `Add keep an omitted field`,
+		origin: `
 apiVersion: apps/v1
 kind: Deployment`,
-		`
+		update: `
 apiVersion: apps/v1
 kind: StatefulSet`,
-		`
+		local: `
 apiVersion: apps/v1
 spec: foo # field not present in source
 `,
-		`
+		expected: `
 apiVersion: apps/v1
 spec: foo # field not present in source
 kind: StatefulSet
-`, nil},
+`},
 
 	//
 	// Test Case
 	//
 	// TODO(#36): consider making this an error
-	{`Change an updated field`,
-		`
+	{
+		description: `Change an updated field`,
+		origin: `
 apiVersion: apps/v1
 kind: Deployment # old value`,
-		`
+		update: `
 apiVersion: apps/v1
 kind: StatefulSet # new value`,
-		`
+		local: `
 apiVersion: apps/v1
 kind: Service # conflicting value`,
-		`
+		expected: `
 apiVersion: apps/v1
-kind: StatefulSet # new value`, nil},
+kind: StatefulSet # new value`},
 
-	{`Ignore a field`,
-		`
+	{
+		description: `Ignore a field`,
+		origin: `
 apiVersion: apps/v1
 kind: Deployment # ignore this field`,
-		`
+		update: `
 apiVersion: apps/v1
 kind: Deployment # ignore this field`,
-		`
+		local: `
 apiVersion: apps/v1`,
-		`
-apiVersion: apps/v1`, nil},
+		expected: `
+apiVersion: apps/v1`},
 
-	{`Explicitly clear a field`,
-		`
+	{
+		description: `Explicitly clear a field`,
+		origin: `
 apiVersion: apps/v1`,
-		`
+		update: `
 apiVersion: apps/v1
 kind: null # clear this value`,
-		`
+		local: `
 apiVersion: apps/v1
 kind: Deployment # value to be cleared`,
-		`
-apiVersion: apps/v1`, nil},
+		expected: `
+apiVersion: apps/v1`},
 
-	{`Implicitly clear a field`,
-		`
+	{description: `Implicitly clear a field`,
+		origin: `
 apiVersion: apps/v1
 kind: Deployment # clear this field`,
-		`
+		update: `
 apiVersion: apps/v1`,
-		`
+		local: `
 apiVersion: apps/v1
 kind: Deployment # clear this field`,
-		`
-apiVersion: apps/v1`, nil},
+		expected: `
+apiVersion: apps/v1`},
 
 	//
 	// Test Case
 	//
 	// TODO(#36): consider making this an error
-	{`Implicitly clear a changed field`,
-		`
+	{
+		description: `Implicitly clear a changed field`,
+		origin: `
 apiVersion: apps/v1
 kind: Deployment`,
-		`
+		update: `
 apiVersion: apps/v1`,
-		`
+		local: `
 apiVersion: apps/v1
 kind: StatefulSet`,
-		`
-apiVersion: apps/v1`, nil},
+		expected: `
+apiVersion: apps/v1`},
 
 	//
 	// Test Case
 	//
-	{`Merge an empty scalar value`,
-		`
+	{
+		description: `Merge an empty scalar value`,
+		origin: `
 apiVersion: apps/v1
 `,
-		`
+		update: `
 apiVersion: apps/v1
 kind: {}
 `,
-		`
+		local: `
 apiVersion: apps/v1
 `,
-		`
+		expected: `
 apiVersion: apps/v1
 kind: {}
-`, nil},
+`},
 }

@@ -3,9 +3,23 @@
 #
 # Makefile for kustomize CLI and API.
 
-MYGOBIN := $(shell go env GOPATH)/bin
-SHELL := /bin/bash
+SHELL := /usr/bin/env bash
+MYGOBIN = $(shell go env GOBIN)
+ifeq ($(MYGOBIN),)
+MYGOBIN = $(shell go env GOPATH)/bin
+endif
 export PATH := $(MYGOBIN):$(PATH)
+MODULES := '"cmd/config" "api/" "kustomize/" "kyaml/"'
+
+# Provide defaults for REPO_OWNER and REPO_NAME if not present.
+# Typically these values would be provided by Prow.
+ifndef REPO_OWNER
+REPO_OWNER := "kubernetes-sigs"
+endif
+
+ifndef REPO_NAME
+REPO_NAME := "kustomize"
+endif
 
 .PHONY: all
 all: verify-kustomize
@@ -15,7 +29,22 @@ verify-kustomize: \
 	lint-kustomize \
 	test-unit-kustomize-all \
 	test-examples-kustomize-against-HEAD \
-	test-examples-kustomize-against-latest
+	test-examples-kustomize-against-4.1
+
+# The following target referenced by a file in
+# https://github.com/kubernetes/test-infra/tree/master/config/jobs/kubernetes-sigs/kustomize
+.PHONY: prow-presubmit-check
+prow-presubmit-check: \
+	lint-kustomize \
+	test-multi-module \
+	test-unit-kustomize-all \
+	test-unit-cmd-all \
+	test-go-mod \
+	test-examples-kustomize-against-HEAD \
+	test-examples-kustomize-against-4.1
+
+.PHONY: verify-kustomize-e2e
+verify-kustomize-e2e: test-examples-e2e-kustomize
 
 # Other builds in this repo might want a different linter version.
 # Without one Makefile to rule them all, the different makes
@@ -23,40 +52,51 @@ verify-kustomize: \
 # since everything uses the same implicit GOPATH.
 # This installs in a temp dir to avoid overwriting someone else's
 # linter, then installs in MYGOBIN with a new name.
-# Version pinned by api/go.mod
+# Version pinned by hack/go.mod
 $(MYGOBIN)/golangci-lint-kustomize:
 	( \
 		set -e; \
-		export GOBIN=$$(mktemp -d) \
-		cd api; \
-		GO111MODULE=on go install github.com/golangci/golangci-lint/cmd/golangci-lint; \
-		mv $$GOBIN/golangci-lint $(MYGOBIN)/golangci-lint-kustomize \
+		cd hack; \
+		GO111MODULE=on go build -tags=tools -o $(MYGOBIN)/golangci-lint-kustomize github.com/golangci/golangci-lint/cmd/golangci-lint; \
 	)
 
-# Version pinned by api/go.mod
+# Install from version specified in api/go.mod.
 $(MYGOBIN)/mdrip:
 	cd api; \
 	go install github.com/monopole/mdrip
 
-# Version pinned by api/go.mod
+# Install from version specified in api/go.mod.
 $(MYGOBIN)/stringer:
 	cd api; \
 	go install golang.org/x/tools/cmd/stringer
 
-# Version pinned by api/go.mod
+# Install from version specified in api/go.mod.
 $(MYGOBIN)/goimports:
 	cd api; \
 	go install golang.org/x/tools/cmd/goimports
 
-# To pin pluginator, use this recipe instead:
-#   cd api;
-#   go install sigs.k8s.io/kustomize/pluginator/v2
-$(MYGOBIN)/pluginator:
-	cd pluginator; \
+# Build from local source.
+$(MYGOBIN)/gorepomod:
+	cd cmd/gorepomod; \
 	go install .
 
-# Install kustomize from whatever is checked out.
-$(MYGOBIN)/kustomize:
+# Build from local source.
+$(MYGOBIN)/k8scopy:
+	cd cmd/k8scopy; \
+	go install .
+
+# Build from local source.
+$(MYGOBIN)/pluginator:
+	cd cmd/pluginator; \
+	go install .
+
+# Build from local source.
+$(MYGOBIN)/prchecker:
+	cd cmd/prchecker; \
+	go install .
+
+# Build from local source.
+$(MYGOBIN)/kustomize: build-kustomize-api
 	cd kustomize; \
 	go install .
 
@@ -64,8 +104,12 @@ $(MYGOBIN)/kustomize:
 install-tools: \
 	$(MYGOBIN)/goimports \
 	$(MYGOBIN)/golangci-lint-kustomize \
+	$(MYGOBIN)/gorepomod \
+	$(MYGOBIN)/helmV3 \
+	$(MYGOBIN)/k8scopy \
 	$(MYGOBIN)/mdrip \
 	$(MYGOBIN)/pluginator \
+	$(MYGOBIN)/prchecker \
 	$(MYGOBIN)/stringer
 
 ### Begin kustomize plugin rules.
@@ -99,7 +143,6 @@ _builtinplugins = \
 	ConfigMapGenerator.go \
 	HashTransformer.go \
 	ImageTagTransformer.go \
-	InventoryTransformer.go \
 	LabelTransformer.go \
 	LegacyOrderTransformer.go \
 	NamespaceTransformer.go \
@@ -107,8 +150,11 @@ _builtinplugins = \
 	PatchStrategicMergeTransformer.go \
 	PatchTransformer.go \
 	PrefixSuffixTransformer.go \
+	ReplacementTransformer.go \
 	ReplicaCountTransformer.go \
-	SecretGenerator.go
+	SecretGenerator.go \
+	ValueAddTransformer.go \
+	HelmChartInflationGenerator.go
 
 # Maintaining this explicit list of generated files, and
 # adding it as a dependency to a few targets, to assure
@@ -124,7 +170,6 @@ $(pGen)/AnnotationsTransformer.go: $(pSrc)/annotationstransformer/AnnotationsTra
 $(pGen)/ConfigMapGenerator.go: $(pSrc)/configmapgenerator/ConfigMapGenerator.go
 $(pGen)/HashTransformer.go: $(pSrc)/hashtransformer/HashTransformer.go
 $(pGen)/ImageTagTransformer.go: $(pSrc)/imagetagtransformer/ImageTagTransformer.go
-$(pGen)/InventoryTransformer.go: $(pSrc)/inventorytransformer/InventoryTransformer.go
 $(pGen)/LabelTransformer.go: $(pSrc)/labeltransformer/LabelTransformer.go
 $(pGen)/LegacyOrderTransformer.go: $(pSrc)/legacyordertransformer/LegacyOrderTransformer.go
 $(pGen)/NamespaceTransformer.go: $(pSrc)/namespacetransformer/NamespaceTransformer.go
@@ -132,8 +177,11 @@ $(pGen)/PatchJson6902Transformer.go: $(pSrc)/patchjson6902transformer/PatchJson6
 $(pGen)/PatchStrategicMergeTransformer.go: $(pSrc)/patchstrategicmergetransformer/PatchStrategicMergeTransformer.go
 $(pGen)/PatchTransformer.go: $(pSrc)/patchtransformer/PatchTransformer.go
 $(pGen)/PrefixSuffixTransformer.go: $(pSrc)/prefixsuffixtransformer/PrefixSuffixTransformer.go
+$(pGen)/ReplacementTransformer.go: $(pSrc)/replacementtransformer/ReplacementTransformer.go
 $(pGen)/ReplicaCountTransformer.go: $(pSrc)/replicacounttransformer/ReplicaCountTransformer.go
 $(pGen)/SecretGenerator.go: $(pSrc)/secretgenerator/SecretGenerator.go
+$(pGen)/ValueAddTransformer.go: $(pSrc)/valueaddtransformer/ValueAddTransformer.go
+$(pGen)/HelmChartInflationGenerator.go: $(pSrc)/helmchartinflationgenerator/HelmChartInflationGenerator.go
 
 # The (verbose but portable) Makefile way to convert to lowercase.
 toLowerCase = $(subst A,a,$(subst B,b,$(subst C,c,$(subst D,d,$(subst E,e,$(subst F,f,$(subst G,g,$(subst H,h,$(subst I,i,$(subst J,j,$(subst K,k,$(subst L,l,$(subst M,m,$(subst N,n,$(subst O,o,$(subst P,p,$(subst Q,q,$(subst R,r,$(subst S,s,$(subst T,t,$(subst U,u,$(subst V,v,$(subst W,w,$(subst X,x,$(subst Y,y,$(subst Z,z,$1))))))))))))))))))))))))))
@@ -152,20 +200,41 @@ $(pGen)/%.go: $(MYGOBIN)/pluginator
 .PHONY: generate-kustomize-builtin-plugins
 generate-kustomize-builtin-plugins: $(builtinplugins)
 
+.PHONY: build-kustomize-external-go-plugin
+build-kustomize-external-go-plugin:
+	./hack/buildExternalGoPlugins.sh ./plugin
+
+.PHONY: clean-kustomize-external-go-plugin
+clean-kustomize-external-go-plugin:
+	./hack/buildExternalGoPlugins.sh ./plugin clean
+
 ### End kustomize plugin rules.
 
 .PHONY: lint-kustomize
 lint-kustomize: install-tools $(builtinplugins)
-	cd api; \
-	$(MYGOBIN)/golangci-lint-kustomize -c ../.golangci-kustomize.yml run ./...
-	cd kustomize; \
-	$(MYGOBIN)/golangci-lint-kustomize -c ../.golangci-kustomize.yml run ./...
-	cd pluginator; \
-	$(MYGOBIN)/golangci-lint-kustomize -c ../.golangci-kustomize.yml run ./...
+	cd api; $(MYGOBIN)/golangci-lint-kustomize \
+	  -c ../.golangci-kustomize.yml \
+	  run ./...
+	cd kustomize; $(MYGOBIN)/golangci-lint-kustomize \
+	  -c ../.golangci-kustomize.yml \
+	  run ./...
+	cd cmd/pluginator; $(MYGOBIN)/golangci-lint-kustomize \
+	  -c ../../.golangci-kustomize.yml \
+	  run ./...
+
+# Used to add non-default compilation flags when experimenting with
+# plugin-to-api compatibility checks.
+.PHONY: build-kustomize-api
+build-kustomize-api: $(builtinplugins)
+	cd api; go build ./...
+
+.PHONY: generate-kustomize-api
+generate-kustomize-api: $(MYGOBIN)/k8scopy
+	cd api; go generate ./...
 
 .PHONY: test-unit-kustomize-api
-test-unit-kustomize-api: $(builtinplugins)
-	cd api; go test ./...
+test-unit-kustomize-api: build-kustomize-api
+	cd api; go test ./...  -ldflags "-X sigs.k8s.io/kustomize/api/provenance.version=v444.333.222"
 
 .PHONY: test-unit-kustomize-plugins
 test-unit-kustomize-plugins:
@@ -181,21 +250,42 @@ test-unit-kustomize-all: \
 	test-unit-kustomize-cli \
 	test-unit-kustomize-plugins
 
+test-unit-cmd-all:
+	./scripts/kyaml-pre-commit.sh
+
+test-go-mod:
+	./scripts/check-go-mod.sh
+
+# Environment variables are defined at
+# https://github.com/kubernetes/test-infra/blob/master/prow/jobs.md#job-environment-variables
+.PHONY: test-multi-module
+test-multi-module: $(MYGOBIN)/prchecker
+	( \
+		export MYGOBIN=$(MYGOBIN); \
+		export REPO_OWNER=$(REPO_OWNER); \
+		export REPO_NAME=$(REPO_NAME); \
+		export PULL_NUMBER=$(PULL_NUMBER); \
+		export MODULES=$(MODULES); \
+		./scripts/check-multi-module.sh; \
+	)
+
+.PHONY:
+test-examples-e2e-kustomize: $(MYGOBIN)/mdrip $(MYGOBIN)/kind
+	( \
+		set -e; \
+		/bin/rm -f $(MYGOBIN)/kustomize; \
+		echo "Installing kustomize from ."; \
+		cd kustomize; go install .; cd ..; \
+		./hack/testExamplesE2EAgainstKustomize.sh .; \
+	)
+
 .PHONY:
 test-examples-kustomize-against-HEAD: $(MYGOBIN)/kustomize $(MYGOBIN)/mdrip
 	./hack/testExamplesAgainstKustomize.sh HEAD
 
 .PHONY:
-test-examples-kustomize-against-latest: $(MYGOBIN)/mdrip
-	( \
-		set -e; \
-		/bin/rm -f $(MYGOBIN)/kustomize; \
-		echo "Installing kustomize from latest."; \
-		GO111MODULE=on go install sigs.k8s.io/kustomize/kustomize/v3; \
-		./hack/testExamplesAgainstKustomize.sh latest; \
-		echo "Reinstalling kustomize from HEAD."; \
-		cd kustomize; go install .; \
-	)
+test-examples-kustomize-against-4.1: $(MYGOBIN)/mdrip
+	./hack/testExamplesAgainstKustomize.sh v4@v4.1.2
 
 # linux only.
 # This is for testing an example plugin that
@@ -214,28 +304,67 @@ $(MYGOBIN)/kubeval:
 	)
 
 # linux only.
-# This is for testing an example plugin that
-# uses helm to inflate a chart for subsequent kustomization.
-# Don't want to add a hard dependence in go.mod file
-# to helm.
-# Instead, download the binary.
-$(MYGOBIN)/helm:
+# This is for testing an example plugin that uses helm to inflate a chart
+# for subsequent kustomization.
+# Don't want to add a hard dependence in go.mod file to helm.
+# Instead, download the binaries.
+$(MYGOBIN)/helmV2:
 	( \
 		set -e; \
 		d=$(shell mktemp -d); cd $$d; \
-		wget https://storage.googleapis.com/kubernetes-helm/helm-v2.13.1-linux-amd64.tar.gz; \
-		tar -xvzf helm-v2.13.1-linux-amd64.tar.gz; \
-		mv linux-amd64/helm $(MYGOBIN); \
+		tgzFile=helm-v2.13.1-linux-amd64.tar.gz; \
+		wget https://storage.googleapis.com/kubernetes-helm/$$tgzFile; \
+		tar -xvzf $$tgzFile; \
+		mv linux-amd64/helm $(MYGOBIN)/helmV2; \
+		rm -rf $$d \
+	)
+
+# Helm V3 differs from helm V2; downloading it to provide coverage for the
+# chart inflator plugin under helm v3.
+$(MYGOBIN)/helmV3:
+	( \
+		set -e; \
+		d=$(shell mktemp -d); cd $$d; \
+		tgzFile=helm-v3.5.3-linux-amd64.tar.gz; \
+		wget https://get.helm.sh/$$tgzFile; \
+		tar -xvzf $$tgzFile; \
+		mv linux-amd64/helm $(MYGOBIN)/helmV3; \
+		rm -rf $$d \
+	)
+
+$(MYGOBIN)/kind:
+	( \
+        set -e; \
+        d=$(shell mktemp -d); cd $$d; \
+        wget -O ./kind https://github.com/kubernetes-sigs/kind/releases/download/v0.7.0/kind-$(shell uname)-amd64; \
+        chmod +x ./kind; \
+        mv ./kind $(MYGOBIN); \
+        rm -rf $$d; \
+	)
+
+# linux only.
+$(MYGOBIN)/gh:
+	( \
+		set -e; \
+		d=$(shell mktemp -d); cd $$d; \
+		tgzFile=gh_1.0.0_linux_amd64.tar.gz; \
+		wget https://github.com/cli/cli/releases/download/v1.0.0/$$tgzFile; \
+		tar -xvzf $$tgzFile; \
+		mv gh_1.0.0_linux_amd64/bin/gh  $(MYGOBIN)/gh; \
 		rm -rf $$d \
 	)
 
 .PHONY: clean
-clean:
+clean: clean-kustomize-external-go-plugin
+	go clean --cache
 	rm -f $(builtinplugins)
-	rm -f $(MYGOBIN)/pluginator
 	rm -f $(MYGOBIN)/kustomize
 	rm -f $(MYGOBIN)/golangci-lint-kustomize
 
+# Handle pluginator manually.
+# rm -f $(MYGOBIN)/pluginator
+
+# Nuke the site from orbit.  It's the only way to be sure.
 .PHONY: nuke
 nuke: clean
-	sudo rm -rf $(shell go env GOPATH)/pkg/mod/sigs.k8s.io
+	go clean --modcache

@@ -7,11 +7,10 @@ package main
 import (
 	"fmt"
 
-	"sigs.k8s.io/kustomize/api/transform"
-
-	"sigs.k8s.io/kustomize/api/resid"
+	"sigs.k8s.io/kustomize/api/filters/replicacount"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/resid"
 	"sigs.k8s.io/yaml"
 )
 
@@ -26,8 +25,7 @@ type plugin struct {
 var KustomizePlugin plugin
 
 func (p *plugin) Config(
-	h *resmap.PluginHelpers, c []byte) (err error) {
-
+	_ *resmap.PluginHelpers, c []byte) (err error) {
 	p.Replica = types.Replica{}
 	p.FieldSpecs = nil
 	return yaml.Unmarshal(c, p)
@@ -35,18 +33,22 @@ func (p *plugin) Config(
 
 func (p *plugin) Transform(m resmap.ResMap) error {
 	found := false
-	for i, replicaSpec := range p.FieldSpecs {
-		matcher := p.createMatcher(i)
-		matchOriginal := m.GetMatchingResourcesByOriginalId(matcher)
-		matchCurrent := m.GetMatchingResourcesByCurrentId(matcher)
-
-		for _, res := range append(matchOriginal, matchCurrent...) {
+	for _, fs := range p.FieldSpecs {
+		matcher := p.createMatcher(fs)
+		resList := m.GetMatchingResourcesByAnyId(matcher)
+		if len(resList) > 0 {
 			found = true
-			err := transform.MutateField(
-				res.Map(), replicaSpec.PathSlice(),
-				replicaSpec.CreateIfNotPresent, p.addReplicas)
-			if err != nil {
-				return err
+			for _, r := range resList {
+				// There are redundant checks in the filter
+				// that we'll live with until resolution of
+				// https://github.com/kubernetes-sigs/kustomize/issues/2506
+				err := r.ApplyFilter(replicacount.Filter{
+					Replica:   p.Replica,
+					FieldSpec: fs,
+				})
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -64,26 +66,8 @@ func (p *plugin) Transform(m resmap.ResMap) error {
 }
 
 // Match Replica.Name and FieldSpec
-func (p *plugin) createMatcher(i int) resmap.IdMatcher {
+func (p *plugin) createMatcher(fs types.FieldSpec) resmap.IdMatcher {
 	return func(r resid.ResId) bool {
-		return r.Name == p.Replica.Name &&
-			r.Gvk.IsSelected(&p.FieldSpecs[i].Gvk)
+		return r.Name == p.Replica.Name && r.Gvk.IsSelected(&fs.Gvk)
 	}
-}
-
-func (p *plugin) addReplicas(in interface{}) (interface{}, error) {
-	switch m := in.(type) {
-	case int64:
-		// Was already in the field.
-	case map[string]interface{}:
-		if len(m) != 0 {
-			// A map was already in the replicas field, don't want to
-			// discard this data silently.
-			return nil, fmt.Errorf("%#v is expected to be %T", in, m)
-		}
-		// Just got added, default type is map, but we can return anything.
-	default:
-		return nil, fmt.Errorf("%#v is expected to be %T", in, m)
-	}
-	return p.Replica.Count, nil
 }

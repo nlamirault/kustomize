@@ -1,24 +1,27 @@
 // Copyright 2019 The Kubernetes Authors.
 // SPDX-License-Identifier: Apache-2.0
 
-// TODO: move most of the tests in the api/target package to this package.
 package krusty_test
 
 import (
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/kustomize/api/filesys"
 	"sigs.k8s.io/kustomize/api/krusty"
 )
 
-func TestSomething1(t *testing.T) {
-	fSys := filesys.MakeFsInMemory()
-	b := krusty.MakeKustomizer(fSys, krusty.MakeDefaultOptions())
-	_, err := b.Run("hey")
+// A simple usage example to shows what happens when
+// there are no files to read.
+// For more substantial tests and examples,
+// see other tests in this package.
+func TestEmptyFileSystem(t *testing.T) {
+	b := krusty.MakeKustomizer(krusty.MakeDefaultOptions())
+	_, err := b.Run(filesys.MakeFsInMemory(), "noSuchThing")
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	if err.Error() != "got file 'hey', but 'hey' must be a directory to be a root" {
+	if !strings.Contains(err.Error(), "'noSuchThing' doesn't exist") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

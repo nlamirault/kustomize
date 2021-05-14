@@ -15,6 +15,7 @@ var Filters = map[string]func() Filter{
 	"AnnotationClearer": func() Filter { return &AnnotationClearer{} },
 	"AnnotationGetter":  func() Filter { return &AnnotationGetter{} },
 	"AnnotationSetter":  func() Filter { return &AnnotationSetter{} },
+	"LabelSetter":       func() Filter { return &LabelSetter{} },
 	"ElementAppender":   func() Filter { return &ElementAppender{} },
 	"ElementMatcher":    func() Filter { return &ElementMatcher{} },
 	"FieldClearer":      func() Filter { return &FieldClearer{} },
@@ -30,7 +31,7 @@ var Filters = map[string]func() Filter{
 	"TeePiper":          func() Filter { return &TeePiper{} },
 }
 
-// YFilter wraps the GrepFilter interface so the filter can be represented as
+// YFilter wraps the Filter interface so the filter can be represented as
 // data and can be unmarshalled into a struct from a yaml config file.
 // This allows Pipelines to be expressed as data rather than code.
 type YFilter struct {
@@ -53,7 +54,7 @@ func (y *YFilter) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			knownFilters = append(knownFilters, k)
 		}
 		sort.Strings(knownFilters)
-		return fmt.Errorf("unsupported GrepFilter Kind %s:  may be one of: [%s]",
+		return fmt.Errorf("unsupported Filter Kind %s:  may be one of: [%s]",
 			meta.Kind, strings.Join(knownFilters, ","))
 	}
 	y.Filter = filter()
@@ -103,15 +104,16 @@ func (s ValueReplacer) Filter(object *RNode) (*RNode, error) {
 	if s.Count == 0 {
 		s.Count = -1
 	}
-	if s.StringMatch != "" {
+	switch {
+	case s.StringMatch != "":
 		object.value.Value = strings.Replace(object.value.Value, s.StringMatch, s.Replace, s.Count)
-	} else if s.RegexMatch != "" {
+	case s.RegexMatch != "":
 		r, err := regexp.Compile(s.RegexMatch)
 		if err != nil {
 			return nil, fmt.Errorf("ValueReplacer RegexMatch does not compile: %v", err)
 		}
 		object.value.Value = r.ReplaceAllString(object.value.Value, s.Replace)
-	} else {
+	default:
 		return nil, fmt.Errorf("ValueReplacer missing StringMatch and RegexMatch")
 	}
 	return object, nil
@@ -138,7 +140,7 @@ type SuffixSetter struct {
 
 func (s SuffixSetter) Filter(object *RNode) (*RNode, error) {
 	if !strings.HasSuffix(object.value.Value, s.Value) {
-		object.value.Value = object.value.Value + s.Value
+		object.value.Value += s.Value
 	}
 	return object, nil
 }

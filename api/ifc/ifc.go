@@ -5,8 +5,8 @@
 package ifc
 
 import (
-	"sigs.k8s.io/kustomize/api/resid"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 // Validator provides functions to validate annotations and labels
@@ -38,57 +38,10 @@ type Loader interface {
 	Cleanup() error
 }
 
-// Kunstructured allows manipulation of k8s objects
-// that do not have Golang structs.
-type Kunstructured interface {
-	Map() map[string]interface{}
-	SetMap(map[string]interface{})
-	Copy() Kunstructured
-	GetFieldValue(string) (interface{}, error)
-	GetString(string) (string, error)
-	GetStringSlice(string) ([]string, error)
-	GetBool(path string) (bool, error)
-	GetFloat64(path string) (float64, error)
-	GetInt64(path string) (int64, error)
-	GetSlice(path string) ([]interface{}, error)
-	GetStringMap(path string) (map[string]string, error)
-	GetMap(path string) (map[string]interface{}, error)
-	MarshalJSON() ([]byte, error)
-	UnmarshalJSON([]byte) error
-	GetGvk() resid.Gvk
-	SetGvk(resid.Gvk)
-	GetKind() string
-	GetName() string
-	SetName(string)
-	SetNamespace(string)
-	GetLabels() map[string]string
-	SetLabels(map[string]string)
-	GetAnnotations() map[string]string
-	SetAnnotations(map[string]string)
-	MatchesLabelSelector(selector string) (bool, error)
-	MatchesAnnotationSelector(selector string) (bool, error)
-	Patch(Kunstructured) error
-}
-
-// KunstructuredFactory makes instances of Kunstructured.
-type KunstructuredFactory interface {
-	SliceFromBytes([]byte) ([]Kunstructured, error)
-	FromMap(m map[string]interface{}) Kunstructured
-	Hasher() KunstructuredHasher
-	MakeConfigMap(
-		kvLdr KvLoader,
-		options *types.GeneratorOptions,
-		args *types.ConfigMapArgs) (Kunstructured, error)
-	MakeSecret(
-		kvLdr KvLoader,
-		options *types.GeneratorOptions,
-		args *types.SecretArgs) (Kunstructured, error)
-}
-
-// KunstructuredHasher returns a hash of the argument
+// KustHasher returns a hash of the argument
 // or an error.
-type KunstructuredHasher interface {
-	Hash(Kunstructured) (string, error)
+type KustHasher interface {
+	Hash(*yaml.RNode) (string, error)
 }
 
 // See core.v1.SecretTypeOpaque

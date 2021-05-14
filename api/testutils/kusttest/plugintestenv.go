@@ -4,110 +4,79 @@
 package kusttest_test
 
 import (
-	"io/ioutil"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"sigs.k8s.io/kustomize/api/filesys"
 	"sigs.k8s.io/kustomize/api/internal/plugins/compiler"
+	"sigs.k8s.io/kustomize/api/internal/plugins/utils"
 	"sigs.k8s.io/kustomize/api/konfig"
 )
 
-// PluginTestEnv manages the plugin test environment.
-// It sets/resets XDG_CONFIG_HOME, makes/removes a temp objRoot,
-// manages a plugin compiler, etc.
-type PluginTestEnv struct {
-	t        *testing.T
-	compiler *compiler.Compiler
-	workDir  string
-	oldXdg   string
-	wasSet   bool
+// pluginTestEnv manages compiling plugins for tests.
+// It manages a Go plugin compiler, and sets/resets shell env vars as needed.
+type pluginTestEnv struct {
+	t          *testing.T
+	compiler   *compiler.Compiler
+	pluginRoot string
+	oldXdg     string
+	wasSet     bool
 }
 
-func NewPluginTestEnv(t *testing.T) *PluginTestEnv {
-	return &PluginTestEnv{t: t}
+// newPluginTestEnv returns a new instance of pluginTestEnv.
+func newPluginTestEnv(t *testing.T) *pluginTestEnv {
+	return &pluginTestEnv{t: t}
 }
 
-func (x *PluginTestEnv) Set() *PluginTestEnv {
-	x.createWorkDir()
-	x.compiler = x.makeCompiler()
+// set creates a test environment.
+// Uses a filesystem on disk for compilation (or copying) of
+// plugin code - this FileSystem has nothing to do with
+// the FileSystem used for loading config yaml in the tests.
+func (x *pluginTestEnv) set() *pluginTestEnv {
+	var err error
+	x.pluginRoot, err = utils.DeterminePluginSrcRoot(filesys.MakeFsOnDisk())
+	if err != nil {
+		x.t.Error(err)
+	}
+	x.compiler = compiler.NewCompiler(x.pluginRoot)
 	x.setEnv()
 	return x
 }
 
-func (x *PluginTestEnv) Reset() {
+// reset restores the environment to pre-test state.
+func (x *pluginTestEnv) reset() {
+	// Calling Cleanup forces recompilation in a test file with multiple
+	// calls to MakeEnhancedHarness - so leaving it out.  Your .gitignore
+	// should ignore .so files anyway.
+	// x.compiler.Cleanup()
 	x.resetEnv()
-	x.removeWorkDir()
 }
 
-func (x *PluginTestEnv) BuildGoPlugin(g, v, k string) {
-	err := x.compiler.Compile(g, v, k)
+// prepareGoPlugin compiles a Go plugin, leaving the newly
+// created object code alongside the src code.
+func (x *pluginTestEnv) prepareGoPlugin(g, v, k string) {
+	x.compiler.SetGVK(g, v, k)
+	err := x.compiler.Compile()
 	if err != nil {
 		x.t.Errorf("compile failed: %v", err)
 	}
 }
 
-func (x *PluginTestEnv) BuildExecPlugin(g, v, k string) {
-	lowK := strings.ToLower(k)
-	obj := filepath.Join(x.compiler.ObjRoot(), g, v, lowK, k)
-	src := filepath.Join(x.compiler.SrcRoot(), g, v, lowK, k)
-	if err := os.MkdirAll(filepath.Dir(obj), 0755); err != nil {
-		x.t.Errorf("error making directory: %s", filepath.Dir(obj))
-	}
-	cmd := exec.Command("cp", src, obj)
-	cmd.Env = os.Environ()
-	if err := cmd.Run(); err != nil {
-		x.t.Errorf("error copying %s to %s: %v", src, obj, err)
-	}
+func (x *pluginTestEnv) prepareExecPlugin(_, _, _ string) {
+	// Do nothing.  At one point this method
+	// copied the exec plugin directory to a temp dir
+	// and ran it from there.  Left as a hook.
 }
 
-func (x *PluginTestEnv) makeCompiler() *compiler.Compiler {
-	// The plugin loader wants to find object code under
-	//    $XDG_CONFIG_HOME/kustomize/plugins
-	// and the compiler writes object code to
-	//    $objRoot
-	// so set things up accordingly.
-	objRoot := filepath.Join(
-		x.workDir, konfig.ProgramName, konfig.RelPluginHome)
-	err := os.MkdirAll(objRoot, os.ModePerm)
-	if err != nil {
-		x.t.Error(err)
-	}
-	srcRoot, err := compiler.DeterminePluginSrcRoot(filesys.MakeFsOnDisk())
-	if err != nil {
-		x.t.Error(err)
-	}
-	return compiler.NewCompiler(srcRoot, objRoot)
+func (x *pluginTestEnv) setEnv() {
+	x.oldXdg, x.wasSet = os.LookupEnv(konfig.KustomizePluginHomeEnv)
+	os.Setenv(konfig.KustomizePluginHomeEnv, x.pluginRoot)
 }
 
-func (x *PluginTestEnv) createWorkDir() {
-	var err error
-	x.workDir, err = ioutil.TempDir("", "kustomize-plugin-tests")
-	if err != nil {
-		x.t.Errorf("failed to make work dir: %v", err)
-	}
-}
-
-func (x *PluginTestEnv) removeWorkDir() {
-	err := os.RemoveAll(x.workDir)
-	if err != nil {
-		x.t.Errorf(
-			"removing work dir: %s %v", x.workDir, err)
-	}
-}
-
-func (x *PluginTestEnv) setEnv() {
-	x.oldXdg, x.wasSet = os.LookupEnv(konfig.XdgConfigHomeEnv)
-	os.Setenv(konfig.XdgConfigHomeEnv, x.workDir)
-}
-
-func (x *PluginTestEnv) resetEnv() {
+func (x *pluginTestEnv) resetEnv() {
 	if x.wasSet {
-		os.Setenv(konfig.XdgConfigHomeEnv, x.oldXdg)
+		os.Setenv(konfig.KustomizePluginHomeEnv, x.oldXdg)
 	} else {
-		os.Unsetenv(konfig.XdgConfigHomeEnv)
+		os.Unsetenv(konfig.KustomizePluginHomeEnv)
 	}
 }

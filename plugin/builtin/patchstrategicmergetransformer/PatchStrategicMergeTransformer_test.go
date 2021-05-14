@@ -8,8 +8,18 @@ import (
 	"strings"
 	"testing"
 
-	"sigs.k8s.io/kustomize/api/testutils/kusttest"
+	"github.com/stretchr/testify/assert"
+	kusttest_test "sigs.k8s.io/kustomize/api/testutils/kusttest"
 )
+
+func errorContains(err error, possibilities ...string) bool {
+	for _, x := range possibilities {
+		if strings.Contains(err.Error(), x) {
+			return true
+		}
+	}
+	return false
+}
 
 const (
 	target = `
@@ -58,13 +68,9 @@ spec:
 )
 
 func TestPatchStrategicMergeTransformerMissingFile(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 	_, err := th.RunTransformer(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
@@ -73,26 +79,17 @@ metadata:
 paths:
 - patch.yaml
 `, target)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(),
-		"cannot read file \"/app/patch.yaml\"") &&
-		!strings.Contains(err.Error(),
-			"cannot unmarshal string") {
+	if assert.Error(t, err) && !errorContains(err,
+		"'/patch.yaml' doesn't exist",
+		"cannot unmarshal string") {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
 
 func TestBadPatchStrategicMergeTransformer(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 	_, err := th.RunTransformer(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
@@ -100,48 +97,35 @@ metadata:
   name: notImportantHere
 patches: 'thisIsNotAPatch'
 `, target)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(),
-		"cannot unmarshal string into Go value of type map[string]interface {}") {
+	if assert.Error(t, err) && !errorContains(err,
+		"cannot unmarshal string into Go value of type map[string]interface {}",
+		"fails configuration: missing Resource metadata") {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
 
 func TestBothEmptyPatchStrategicMergeTransformer(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 	_, err := th.RunTransformer(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
   name: notImportantHere
 `, target)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "empty file path and empty patch content") {
+	if assert.Error(t, err) && !errorContains(
+		err, "empty file path and empty patch content") {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
 
 func TestPatchStrategicMergeTransformerFromFiles(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch.yaml", `
+	th.WriteF("/patch.yaml", `
 apiVersion: apps/v1
 metadata:
   name: myDeploy
@@ -154,16 +138,15 @@ spec:
   replica: 3
 `)
 
-	rm := th.LoadAndRunTransformer(`
+	th.RunTransformerAndCheckResult(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
   name: notImportantHere
 paths:
 - patch.yaml
-`, target)
-
-	th.AssertActualEqualsExpected(rm, `
+`,
+		target, `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -183,23 +166,18 @@ spec:
 }
 
 func TestPatchStrategicMergeTransformerWithInlineJSON(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	rm := th.LoadAndRunTransformer(`
+	th.RunTransformerAndCheckResult(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
   name: notImportantHere
 patches: '{"apiVersion": "apps/v1", "metadata": {"name": "myDeploy"}, "kind": "Deployment", "spec": {"replica": 3}}'
-`, target)
-
-	th.AssertActualEqualsExpected(rm, `
+`,
+		target, `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -218,15 +196,11 @@ spec:
 }
 
 func TestPatchStrategicMergeTransformerWithInlineYAML(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	rm := th.LoadAndRunTransformer(`
+	th.RunTransformerAndCheckResult(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
@@ -249,9 +223,8 @@ patches: |-
         containers:
         - name: nginx
           image: nginx:latest
-`, target)
-
-	th.AssertActualEqualsExpected(rm, `
+`,
+		target, `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -270,15 +243,11 @@ spec:
 }
 
 func TestPatchStrategicMergeTransformerMultiplePatches(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch1.yaml", `
+	th.WriteF("patch1.yaml", `
 apiVersion: apps/v1
 metadata:
   name: myDeploy
@@ -294,7 +263,7 @@ spec:
           value: BAR
 `)
 
-	th.WriteF("/app/patch2.yaml", `
+	th.WriteF("patch2.yaml", `
 apiVersion: apps/v1
 metadata:
   name: myDeploy
@@ -311,7 +280,7 @@ spec:
         image: busybox
 `)
 
-	rm := th.LoadAndRunTransformer(`
+	th.RunTransformerAndCheckResult(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
@@ -319,9 +288,8 @@ metadata:
 paths:
 - patch1.yaml
 - patch2.yaml
-`, target)
-
-	th.AssertActualEqualsExpected(rm, `
+`,
+		target, `
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -346,77 +314,11 @@ spec:
 `)
 }
 
-func TestStrategicMergeTransformerMultiplePatchesWithConflicts(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch1.yaml", `
-apiVersion: apps/v1
-metadata:
-  name: myDeploy
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:latest
-        env:
-        - name: SOMEENV
-          value: BAR
-`)
-
-	th.WriteF("/app/patch2.yaml", `
-apiVersion: apps/v1
-metadata:
-  name: myDeploy
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.7.9
-        env:
-        - name: ANOTHERENV
-          value: HELLO
-      - name: busybox
-        image: busybox
-`)
-
-	err := th.ErrorFromLoadAndRunTransformer(`
-apiVersion: builtin
-kind: PatchStrategicMergeTransformer
-metadata:
-  name: notImportantHere
-paths:
-- patch1.yaml
-- patch2.yaml
-`, target)
-
-	if err == nil {
-		t.Fatalf("did not get expected error")
-	}
-	if !strings.Contains(err.Error(), "conflict") {
-		t.Fatalf("expected error to contain %q but get %v", "conflict", err)
-	}
-}
-
 func TestStrategicMergeTransformerWrongNamespace(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch.yaml", `
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
+	th.WriteF("patch.yaml", `
 apiVersion: apps/v1
 metadata:
   name: myDeploy
@@ -432,8 +334,7 @@ spec:
         - name: SOMEENV
           value: BAR
 `)
-
-	err := th.ErrorFromLoadAndRunTransformer(`
+	_, err := th.RunTransformer(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
@@ -441,25 +342,134 @@ metadata:
 paths:
 - patch.yaml
 `, targetWithNamespace)
-
-	if err == nil {
-		t.Fatalf("did not get expected error")
-	}
-	if !strings.Contains(err.Error(), "failed to find unique target for patch") {
+	if assert.Error(t, err) && !errorContains(
+		err, "failed to find unique target for patch") {
 		t.Fatalf("expected error to contain %q but get %v", "failed to find target for patch", err)
 	}
 }
 
+// issue #2734 -- https://github.com/kubernetes-sigs/kustomize/issues/2734
+// kyaml cleans up things some folks prefer it didnt
+// 1. []    -- see initContainers and imagePullSecrets
+// 2. {}    -- see emptyDir
+// 3. null  -- see creationTimestamp
+
+const anUncleanDeploymentResource = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sas-crunchy-data-postgres-operator
+spec:
+  replicas: 1
+  template:
+    metadata:
+      creationTimestamp: null
+    spec:
+      serviceAccountName: postgres-operator
+      containers:
+      - name: apiserver
+        image: sas-crunchy-data-operator-api-server
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8443
+        envFrom: []
+        volumeMounts:
+        - name: security-ssh
+          mountPath: /security-ssh
+        - mountPath: /tmp
+          name: tmp
+      imagePullSecrets: []
+      initContainers: []
+      volumes:
+      - emptyDir: {}
+        name: security-ssh
+      - emptyDir: {}
+        name: tmp
+`
+
+// This is the preffered result (and what we get with kustomize 3.7.0)
+const expectedCleanedDeployment = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    workload.sas.com/class: stateless
+  name: sas-crunchy-data-postgres-operator
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        workload.sas.com/class: stateless
+    spec:
+      containers:
+      - envFrom: []
+        image: sas-crunchy-data-operator-api-server
+        imagePullPolicy: IfNotPresent
+        name: apiserver
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - mountPath: /security-ssh
+          name: security-ssh
+        - mountPath: /tmp
+          name: tmp
+      imagePullSecrets: []
+      initContainers: []
+      serviceAccountName: postgres-operator
+      tolerations:
+      - effect: NoSchedule
+        key: workload.sas.com/class
+        operator: Equal
+        value: stateful
+      volumes:
+      - emptyDir: {}
+        name: security-ssh
+      - emptyDir: {}
+        name: tmp
+`
+
+func TestPatchStrategicMergeTransformerCleanupItems(t *testing.T) {
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
+
+	th.WriteF("/patch.yaml", `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sas-crunchy-data-postgres-operator
+  labels:
+    workload.sas.com/class: stateless
+spec:
+  template:
+    metadata:
+      labels:
+        workload.sas.com/class: stateless
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: workload.sas.com/class
+          operator: Equal
+          value: stateful
+`)
+
+	th.RunTransformerAndCheckResult(`
+apiVersion: builtin
+kind: PatchStrategicMergeTransformer
+metadata:
+  name: notImportantHere
+paths:
+- patch.yaml
+`,
+		anUncleanDeploymentResource,
+		expectedCleanedDeployment) // prefer expectedCleanedDeployment
+}
+
 func TestStrategicMergeTransformerNoSchema(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch.yaml", `
+	th.WriteF("patch.yaml", `
 apiVersion: example.com/v1
 kind: Foo
 metadata:
@@ -469,16 +479,16 @@ spec:
     B:
     C: Z
 `)
-	rm := th.LoadAndRunTransformer(`
+	th.RunTransformerAndCheckResult(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
   name: notImportantHere
 paths:
 - patch.yaml
-`, targetNoschema)
-
-	th.AssertActualEqualsExpected(rm, `
+`,
+		targetNoschema,
+		`
 apiVersion: example.com/v1
 kind: Foo
 metadata:
@@ -491,15 +501,11 @@ spec:
 }
 
 func TestStrategicMergeTransformerNoSchemaMultiPatches(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch1.yaml", `
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
+	// This patch wants to delete "B".
+	th.WriteF("patch1.yaml", `
 apiVersion: example.com/v1
 kind: Foo
 metadata:
@@ -509,7 +515,7 @@ spec:
     B:
     C: Z
 `)
-	th.WriteF("/app/patch2.yaml", `
+	th.WriteF("patch2.yaml", `
 apiVersion: example.com/v1
 kind: Foo
 metadata:
@@ -521,7 +527,7 @@ spec:
   baz:
     hello: world
 `)
-	rm := th.LoadAndRunTransformer(`
+	resMap, err := th.RunTransformer(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
@@ -529,9 +535,18 @@ metadata:
 paths:
 - patch1.yaml
 - patch2.yaml
-`, targetNoschema)
-
-	th.AssertActualEqualsExpected(rm, `
+`, `apiVersion: example.com/v1
+kind: Foo
+metadata:
+  name: my-foo
+spec:
+  bar:
+    A: X
+    B: Y
+`)
+	assert.NoError(t, err)
+	th.AssertActualEqualsExpectedNoIdAnnotations(
+		resMap, `
 apiVersion: example.com/v1
 kind: Foo
 metadata:
@@ -544,48 +559,39 @@ spec:
   baz:
     hello: world
 `)
-}
-
-func TestStrategicMergeTransformerNoSchemaMultiPatchesWithConflict(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	th.WriteF("/app/patch1.yaml", `
-apiVersion: example.com/v1
-kind: Foo
-metadata:
-  name: my-foo
-spec:
-  bar:
-    C: Z
-`)
-	th.WriteF("/app/patch2.yaml", `
-apiVersion: example.com/v1
-kind: Foo
-metadata:
-  name: my-foo
-spec:
-  bar:
-    C: NOT_Z
-
-`)
-	err := th.ErrorFromLoadAndRunTransformer(`
+	resMap, err = th.RunTransformer(`
 apiVersion: builtin
 kind: PatchStrategicMergeTransformer
 metadata:
   name: notImportantHere
 paths:
-- patch1.yaml
 - patch2.yaml
-`, targetNoschema)
-	if !strings.Contains(err.Error(), "conflict") {
-		t.Fatalf("expected error to contain %q but get %v", "conflict", err)
-	}
+`, `apiVersion: example.com/v1
+kind: Foo
+metadata:
+  name: my-foo
+spec:
+  bar:
+    A: X
+    B: Y
+`)
+	assert.NoError(t, err)
+	th.AssertActualEqualsExpectedNoIdAnnotations(
+		// This time only patch2 is applied.
+		resMap, `
+apiVersion: example.com/v1
+kind: Foo
+metadata:
+  name: my-foo
+spec:
+  bar:
+    A: X
+    B: "Y"
+    C: Z
+    D: W
+  baz:
+    hello: world
+`)
 }
 
 // simple utility function to add an namespace in a resource
@@ -601,11 +607,7 @@ func addNamespace(namespace string, base string) string {
 
 // compareExpectedError compares the expectedError and the actualError return by GetFieldValue
 func compareExpectedError(t *testing.T, name string, err error, errorMsg string) {
-	if err == nil {
-		t.Fatalf("%q; - should return error, but no error returned", name)
-	}
-
-	if !strings.Contains(err.Error(), errorMsg) {
+	if assert.Error(t, err, name) && !errorContains(err, errorMsg) {
 		t.Fatalf("%q; - expected error: \"%s\", got error: \"%v\"",
 			name, errorMsg, err.Error())
 	}
@@ -632,7 +634,7 @@ spec:
       labels:
         old-label: old-value
     spec:
-      containers: 
+      containers:
       - name: nginx
         image: nginx`
 	return fmt.Sprintf(res, kind)
@@ -644,7 +646,6 @@ spec:
 // Note that for SMP/WithSchema merge, the name:nginx entry
 // is mandatory
 func addLabelAndEnvPatch(kind string) string {
-
 	res := `
 apiVersion: apps/v1
 kind: %s
@@ -658,7 +659,7 @@ spec:
     spec:
       containers:
        - name: nginx
-         env: 
+         env:
          - name: SOMEENV
            value: SOMEVALUE`
 
@@ -883,215 +884,65 @@ func TestSinglePatch(t *testing.T) {
 		},
 	}
 
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
 	for _, test := range tests {
-		th := kusttest_test.NewKustTestHarnessAllowPlugins(t, fmt.Sprintf("/%s", test.name))
+		th.ResetLoaderRoot(fmt.Sprintf("/%s", test.name))
 		th.WriteF(fmt.Sprintf("/%s/patch%d.yaml", test.name, 0), test.patch)
-
 		if test.errorExpected {
-			err := th.ErrorFromLoadAndRunTransformer(toConfig(test.patch), test.base)
+			_, err := th.RunTransformer(toConfig(test.patch), test.base)
 			compareExpectedError(t, test.name, err, test.errorMsg)
 		} else {
-			rm := th.LoadAndRunTransformer(toConfig(test.patch), test.base)
-			th.AssertActualEqualsExpected(rm, test.expected)
+			th.RunTransformerAndCheckResult(
+				toConfig(test.patch), test.base, test.expected)
 		}
 	}
+}
+
+type testRecord struct {
+	base          string
+	patch         []string
+	expected      string
+	errorExpected bool
+	errorMsg      string
 }
 
 // TestMultiplePatches checks that the patches are applied
 // properly, that the same result is obtained,
 // regardless of the order of the patches and regardless
-// of the schema availibility (SMP vs JSON)
+// of the schema availability (SMP vs JSON)
 func TestMultiplePatches(t *testing.T) {
-	tests := []struct {
-		name          string
-		base          string
-		patch         []string
-		expected      string
-		errorExpected bool
-		errorMsg      string
-	}{
-		{
-			name: "withschema-label-image-container",
+	tests := map[string]testRecord{
+		"withschema-label-image-container": {
 			base: baseResource(Deployment),
 			patch: []string{
 				addLabelAndEnvPatch(Deployment),
 				changeImagePatch(Deployment, "nginx:latest"),
 				addContainerAndEnvPatch(Deployment),
 			},
-			errorExpected: false,
-			expected:      expectedResultMultiPatch(Deployment, false),
+			expected: expectedResultMultiPatch(Deployment, false),
 		},
-		{
-			name: "withschema-image-container-label",
+		"withschema-image-container-label": {
 			base: baseResource(Deployment),
 			patch: []string{
 				changeImagePatch(Deployment, "nginx:latest"),
 				addContainerAndEnvPatch(Deployment),
 				addLabelAndEnvPatch(Deployment),
 			},
-			errorExpected: false,
-			expected:      expectedResultMultiPatch(Deployment, true),
+			expected: expectedResultMultiPatch(Deployment, true),
 		},
-		{
-			name: "withschema-container-label-image",
+		"withschema-container-label-image": {
 			base: baseResource(Deployment),
 			patch: []string{
 				addContainerAndEnvPatch(Deployment),
 				addLabelAndEnvPatch(Deployment),
 				changeImagePatch(Deployment, "nginx:latest"),
 			},
-			errorExpected: false,
-			expected:      expectedResultMultiPatch(Deployment, true),
+			expected: expectedResultMultiPatch(Deployment, true),
 		},
-		{
-			name: "noschema-label-image-container",
-			base: baseResource(MyCRD),
-			patch: []string{
-				addLabelAndEnvPatch(MyCRD),
-				changeImagePatch(MyCRD, "nginx:latest"),
-				addContainerAndEnvPatch(MyCRD),
-			},
-			// This should work
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "noschema-image-container-label",
-			base: baseResource(MyCRD),
-			patch: []string{
-				changeImagePatch(MyCRD, "nginx:latest"),
-				addContainerAndEnvPatch(MyCRD),
-				addLabelAndEnvPatch(MyCRD),
-			},
-			// This should work
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "noschema-container-label-image",
-			base: baseResource(MyCRD),
-			patch: []string{
-				addContainerAndEnvPatch(MyCRD),
-				addLabelAndEnvPatch(MyCRD),
-				changeImagePatch(MyCRD, "nginx:latest"),
-			},
-			// This should work
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-	}
-
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
-
-	for _, test := range tests {
-		th := kusttest_test.NewKustTestHarnessAllowPlugins(t, fmt.Sprintf("/%s", test.name))
-		for idx, patch := range test.patch {
-			th.WriteF(fmt.Sprintf("/%s/patch%d.yaml", test.name, idx), patch)
-		}
-
-		if test.errorExpected {
-			err := th.ErrorFromLoadAndRunTransformer(toConfig(test.patch...), test.base)
-			compareExpectedError(t, test.name, err, test.errorMsg)
-		} else {
-			rm := th.LoadAndRunTransformer(toConfig(test.patch...), test.base)
-			th.AssertActualEqualsExpected(rm, test.expected)
-		}
-	}
-
-}
-
-// TestMultiplePatchesWithConflict checks that the conflict are
-// detected regardless of the order of the patches and regardless
-// of the schema availibility (SMP vs JSON)
-func TestMultiplePatchesWithConflict(t *testing.T) {
-	tests := []struct {
-		name          string
-		base          string
-		patch         []string
-		expected      string
-		errorExpected bool
-		errorMsg      string
-	}{
-		{
-			name: "withschema-label-latest-1.7.9",
-			base: baseResource(Deployment),
-			patch: []string{
-				addLabelAndEnvPatch(Deployment),
-				changeImagePatch(Deployment, "nginx:latest"),
-				changeImagePatch(Deployment, "nginx:1.7.9"),
-			},
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "withschema-latest-label-1.7.9",
-			base: baseResource(Deployment),
-			patch: []string{
-				changeImagePatch(Deployment, "nginx:latest"),
-				addLabelAndEnvPatch(Deployment),
-				changeImagePatch(Deployment, "nginx:1.7.9"),
-			},
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "withschema-1.7.9-label-latest",
-			base: baseResource(Deployment),
-			patch: []string{
-				changeImagePatch(Deployment, "nginx:1.7.9"),
-				addLabelAndEnvPatch(Deployment),
-				changeImagePatch(Deployment, "nginx:latest"),
-			},
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "withschema-1.7.9-latest-label",
-			base: baseResource(Deployment),
-			patch: []string{
-				changeImagePatch(Deployment, "nginx:1.7.9"),
-				changeImagePatch(Deployment, "nginx:latest"),
-				addLabelAndEnvPatch(Deployment),
-				changeImagePatch(Deployment, "nginx:nginx"),
-			},
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "noschema-label-latest-1.7.9",
-			base: baseResource(MyCRD),
-			patch: []string{
-				addLabelAndEnvPatch(MyCRD),
-				changeImagePatch(MyCRD, "nginx:latest"),
-				changeImagePatch(MyCRD, "nginx:1.7.9"),
-			},
-			errorExpected: true,
-			errorMsg:      "conflict",
-		},
-		{
-			name: "noschema-latest-label-1.7.9",
-			base: baseResource(MyCRD),
-			patch: []string{
-				changeImagePatch(MyCRD, "nginx:latest"),
-				addLabelAndEnvPatch(MyCRD),
-				changeImagePatch(MyCRD, "nginx:1.7.9"),
-			},
-			errorExpected: false,
-			// There is no conflict detected. It should
-			// be but the JMPConflictDector ignores it.
-			// See https://github.com/kubernetes-sigs/kustomize/issues/1370
-			expected: expectedResultJMP("nginx:1.7.9"),
-		},
-		{
-			name: "noschema-1.7.9-label-latest",
+		"noschema-1.7.9-label-latest": {
 			base: baseResource(MyCRD),
 			patch: []string{
 				changeImagePatch(MyCRD, "nginx:1.7.9"),
@@ -1099,44 +950,43 @@ func TestMultiplePatchesWithConflict(t *testing.T) {
 				changeImagePatch(MyCRD, "nginx:latest"),
 			},
 			errorExpected: false,
-			// There is no conflict detected. It should
-			// be but the JMPConflictDector ignores it.
-			// See https://github.com/kubernetes-sigs/kustomize/issues/1370
+			// Theses patches aren't commutable (you get a different result
+			// if they are ordered differently).  This is allowed without error.
 			expected: expectedResultJMP("nginx:latest"),
 		},
-		{
-			name: "noschema-1.7.9-latest-label",
+		"noschema-latest-label-1.7.9": {
 			base: baseResource(MyCRD),
 			patch: []string{
-				changeImagePatch(MyCRD, "nginx:1.7.9"),
 				changeImagePatch(MyCRD, "nginx:latest"),
 				addLabelAndEnvPatch(MyCRD),
-				changeImagePatch(MyCRD, "nginx:nginx"),
+				changeImagePatch(MyCRD, "nginx:1.7.9"),
 			},
-			errorExpected: true,
+			errorExpected: false,
+			// Theses patches aren't commutable (you get a different result
+			// if they are ordered differently).  This is allowed without error.
+			expected: expectedResultJMP("nginx:1.7.9"),
 		},
 	}
 
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	for _, test := range tests {
-		th := kusttest_test.NewKustTestHarnessAllowPlugins(t, fmt.Sprintf("/%s", test.name))
-		for idx, patch := range test.patch {
-			th.WriteF(fmt.Sprintf("/%s/patch%d.yaml", test.name, idx), patch)
-		}
-
-		if test.errorExpected {
-			err := th.ErrorFromLoadAndRunTransformer(toConfig(test.patch...), test.base)
-			compareExpectedError(t, test.name, err, test.errorMsg)
-		} else {
-			rm := th.LoadAndRunTransformer(toConfig(test.patch...), test.base)
-			th.AssertActualEqualsExpected(rm, test.expected)
-		}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			th.ResetLoaderRoot(fmt.Sprintf("/%s", name))
+			for idx, patch := range test.patch {
+				th.WriteF(fmt.Sprintf("/%s/patch%d.yaml", name, idx), patch)
+			}
+			if test.errorExpected {
+				_, err := th.RunTransformer(toConfig(test.patch...), test.base)
+				compareExpectedError(t, name, err, test.errorMsg)
+			} else {
+				th.RunTransformerAndCheckResult(
+					toConfig(test.patch...), test.base, test.expected)
+			}
+		})
 	}
-
 }
 
 // TestMultipleNamespaces before the same patch
@@ -1226,37 +1076,117 @@ func TestMultipleNamespaces(t *testing.T) {
 		},
 	}
 
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
 	for _, test := range tests {
-		th := kusttest_test.NewKustTestHarnessAllowPlugins(t, fmt.Sprintf("/%s", test.name))
+		th.ResetLoaderRoot(fmt.Sprintf("/%s", test.name))
 		for idx, patch := range test.patch {
 			th.WriteF(fmt.Sprintf("/%s/patch%d.yaml", test.name, idx), patch)
 		}
 
 		if test.errorExpected {
-			err := th.ErrorFromLoadAndRunTransformer(toConfig(test.patch...), strings.Join(test.base, "\n---\n"))
+			_, err := th.RunTransformer(
+				toConfig(test.patch...), strings.Join(test.base, "\n---\n"))
 			compareExpectedError(t, test.name, err, test.errorMsg)
 		} else {
-			rm := th.LoadAndRunTransformer(toConfig(test.patch...), strings.Join(test.base, "\n---\n"))
-			th.AssertActualEqualsExpected(rm, strings.Join(test.expected, "---\n"))
+			th.RunTransformerAndCheckResult(
+				toConfig(test.patch...),
+				strings.Join(test.base, "\n---\n"),
+				strings.Join(test.expected, "---\n"))
 		}
 	}
 }
 
-func TestPatchStrategicMergeTransformerPatchDelete(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+func TestPatchStrategicMergeTransformerPatchDelete1(t *testing.T) {
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "PatchStrategicMergeTransformer")
+	th.WriteF("patch.yaml", `
+apiVersion: apps/v1
+metadata:
+  name: myDeploy
+kind: Deployment
+spec:
+  replica: 2
+  template:
+    $patch: delete
+    metadata:
+      labels:
+        old-label: old-value
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+`)
 
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
+	rm := th.LoadAndRunTransformer(`
+apiVersion: builtin
+kind: PatchStrategicMergeTransformer
+metadata:
+  name: notImportantHere
+paths:
+- patch.yaml
+`, target)
 
-	th.WriteF("/app/patch.yaml", `
+	th.AssertActualEqualsExpectedNoIdAnnotations(rm, `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myDeploy
+spec:
+  replica: 2
+`)
+}
+
+func TestPatchStrategicMergeTransformerPatchDelete2(t *testing.T) {
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
+
+	th.WriteF("patch.yaml", `
+apiVersion: apps/v1
+metadata:
+  name: myDeploy
+kind: Deployment
+spec:
+  $patch: delete
+  replica: 2
+  template:
+    metadata:
+      labels:
+        old-label: old-value
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+`)
+
+	rm := th.LoadAndRunTransformer(`
+apiVersion: builtin
+kind: PatchStrategicMergeTransformer
+metadata:
+  name: notImportantHere
+paths:
+- patch.yaml
+`, target)
+
+	th.AssertActualEqualsExpectedNoIdAnnotations(rm, `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myDeploy
+`)
+}
+
+func TestPatchStrategicMergeTransformerPatchDelete3(t *testing.T) {
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("PatchStrategicMergeTransformer")
+	defer th.Reset()
+
+	th.WriteF("patch.yaml", `
 apiVersion: apps/v1
 metadata:
   name: myDeploy

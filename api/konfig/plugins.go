@@ -35,40 +35,23 @@ const (
 	// Domain from which kustomize code is imported, for locating
 	// plugin source code under $GOPATH when GOPATH is defined.
 	DomainName = "sigs.k8s.io"
+
+	// Injected into plugin paths when plugins are disabled.
+	// Provides a clue in flows that shouldn't happen.
+	NoPluginHomeSentinal = "/No/non-builtin/plugins!"
 )
-
-func EnabledPluginConfig() (*types.PluginConfig, error) {
-	dir, err := DefaultAbsPluginHome(filesys.MakeFsOnDisk())
-	if err != nil {
-		return nil, err
-	}
-	return MakePluginConfig(types.PluginRestrictionsNone, dir), nil
-}
-
-func DisabledPluginConfig() *types.PluginConfig {
-	return MakePluginConfig(
-		types.PluginRestrictionsBuiltinsOnly, NoPluginHomeSentinal)
-}
-
-func MakePluginConfig(
-	pr types.PluginRestrictions, home string) *types.PluginConfig {
-	return &types.PluginConfig{
-		PluginRestrictions: pr,
-		AbsPluginHome:      home,
-	}
-}
-
-// Use an obviously erroneous path, in case it's accidentally used.
-const NoPluginHomeSentinal = "/no/non-builtin/plugins!"
 
 type NotedFunc struct {
 	Note string
 	F    func() string
 }
 
+// DefaultAbsPluginHome returns the absolute path in the given file
+// system to first directory that looks like a good candidate for
+// the home of kustomize plugins.
 func DefaultAbsPluginHome(fSys filesys.FileSystem) (string, error) {
 	return FirstDirThatExistsElseError(
-		"plugin home directory", fSys, []NotedFunc{
+		"plugin root", fSys, []NotedFunc{
 			{
 				Note: "homed in $" + KustomizePluginHomeEnv,
 				F: func() string {
@@ -78,9 +61,11 @@ func DefaultAbsPluginHome(fSys filesys.FileSystem) (string, error) {
 			{
 				Note: "homed in $" + XdgConfigHomeEnv,
 				F: func() string {
-					return filepath.Join(
-						os.Getenv(XdgConfigHomeEnv),
-						ProgramName, RelPluginHome)
+					if root := os.Getenv(XdgConfigHomeEnv); root != "" {
+						return filepath.Join(root, ProgramName, RelPluginHome)
+					}
+					// do not look in "kustomize/plugin" if XdgConfigHomeEnv is unset
+					return ""
 				},
 			},
 			{
@@ -109,11 +94,14 @@ func FirstDirThatExistsElseError(
 	pathFuncs []NotedFunc) (string, error) {
 	var nope []types.Pair
 	for _, dt := range pathFuncs {
-		dir := dt.F()
-		if fSys.Exists(dir) {
-			return dir, nil
+		if dir := dt.F(); dir != "" {
+			if fSys.Exists(dir) {
+				return dir, nil
+			}
+			nope = append(nope, types.Pair{Key: dt.Note, Value: dir})
+		} else {
+			nope = append(nope, types.Pair{Key: dt.Note, Value: "<no value>"})
 		}
-		nope = append(nope, types.Pair{Key: dt.Note, Value: dir})
 	}
 	return "", types.NewErrUnableToFind(what, nope)
 }
@@ -139,7 +127,7 @@ func CurrentWorkingDir() string {
 	if len(pwd) > 0 {
 		return pwd
 	}
-	return "."
+	return filesys.SelfDir
 }
 
 func pwdEnv() string {

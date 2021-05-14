@@ -12,14 +12,14 @@ import (
 )
 
 type plugin struct {
-	hasher ifc.KunstructuredHasher
+	hasher ifc.KustHasher
 }
 
 //noinspection GoUnusedGlobalVariable
 var KustomizePlugin plugin
 
 func (p *plugin) Config(
-	h *resmap.PluginHelpers, config []byte) (err error) {
+	h *resmap.PluginHelpers, _ []byte) (err error) {
 	p.hasher = h.ResmapFactory().RF().Hasher()
 	return nil
 }
@@ -28,10 +28,11 @@ func (p *plugin) Config(
 func (p *plugin) Transform(m resmap.ResMap) error {
 	for _, res := range m.Resources() {
 		if res.NeedHashSuffix() {
-			h, err := p.hasher.Hash(res)
+			h, err := res.Hash(p.hasher)
 			if err != nil {
 				return err
 			}
+			res.StorePreviousId()
 			res.SetName(fmt.Sprintf("%s-%s", res.GetName(), h))
 		}
 	}

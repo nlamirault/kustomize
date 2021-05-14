@@ -5,24 +5,21 @@ package resmap_test
 
 import (
 	"encoding/base64"
-	"reflect"
 	"testing"
 
-	"sigs.k8s.io/kustomize/api/resid"
-
+	"github.com/stretchr/testify/assert"
 	"sigs.k8s.io/kustomize/api/filesys"
 	"sigs.k8s.io/kustomize/api/ifc"
-	"sigs.k8s.io/kustomize/api/internal/loadertest"
 	"sigs.k8s.io/kustomize/api/kv"
 	"sigs.k8s.io/kustomize/api/loader"
 	. "sigs.k8s.io/kustomize/api/resmap"
 	resmaptest_test "sigs.k8s.io/kustomize/api/testutils/resmaptest"
 	valtest_test "sigs.k8s.io/kustomize/api/testutils/valtest"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
 func TestFromFile(t *testing.T) {
-
 	resourceStr := `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,10 +39,6 @@ metadata:
   namespace: test
 ---
 `
-	l := loadertest.NewFakeLoader("/whatever/project")
-	if ferr := l.AddFile("/whatever/project/deployment.yaml", []byte(resourceStr)); ferr != nil {
-		t.Fatalf("Error adding fake file: %v\n", ferr)
-	}
 	expected := resmaptest_test.NewRmBuilder(t, rf).
 		Add(map[string]interface{}{
 			"apiVersion": "apps/v1",
@@ -66,14 +59,21 @@ metadata:
 				"name":      "dply2",
 				"namespace": "test",
 			}}).ResMap()
+	expYaml, err := expected.AsYaml()
+	assert.NoError(t, err)
 
-	m, _ := rmF.FromFile(l, "deployment.yaml")
-	if m.Size() != 3 {
-		t.Fatalf("result should contain 3, but got %d", m.Size())
-	}
-	if err := expected.ErrorIfNotEqualLists(m); err != nil {
-		t.Fatalf("actual doesn't match expected: %v", err)
-	}
+	fSys := filesys.MakeFsInMemory()
+	assert.NoError(t, fSys.WriteFile("deployment.yaml", []byte(resourceStr)))
+
+	ldr, err := loader.NewLoader(
+		loader.RestrictionRootOnly, filesys.Separator, fSys)
+	assert.NoError(t, err)
+
+	m, err := rmF.FromFile(ldr, "deployment.yaml")
+	assert.NoError(t, err)
+	mYaml, err := m.AsYaml()
+	assert.NoError(t, err)
+	assert.Equal(t, expYaml, mYaml)
 }
 
 func TestFromBytes(t *testing.T) {
@@ -100,16 +100,14 @@ metadata:
 			"metadata": map[string]interface{}{
 				"name": "cm2",
 			}}).ResMap()
+	expYaml, err := expected.AsYaml()
+	assert.NoError(t, err)
 	m, err := rmF.NewResMapFromBytes(encoded)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !reflect.DeepEqual(m, expected) {
-		t.Fatalf("%#v doesn't match expected %#v", m, expected)
-	}
+	assert.NoError(t, err)
+	mYaml, err := m.AsYaml()
+	assert.NoError(t, err)
+	assert.Equal(t, expYaml, mYaml)
 }
-
-var cmap = resid.Gvk{Version: "v1", Kind: "ConfigMap"}
 
 func TestNewFromConfigMaps(t *testing.T) {
 	type testCase struct {
@@ -120,8 +118,13 @@ func TestNewFromConfigMaps(t *testing.T) {
 		expected    ResMap
 	}
 
-	l := loadertest.NewFakeLoader("/whatever/project")
-	kvLdr := kv.NewLoader(l, valtest_test.MakeFakeValidator())
+	fSys := filesys.MakeFsInMemory()
+	ldr, err := loader.NewLoader(
+		loader.RestrictionRootOnly, filesys.Separator, fSys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kvLdr := kv.NewLoader(ldr, valtest_test.MakeFakeValidator())
 	testCases := []testCase{
 		{
 			description: "construct config map from env",
@@ -135,7 +138,7 @@ func TestNewFromConfigMaps(t *testing.T) {
 					},
 				},
 			},
-			filepath: "/whatever/project/app.env",
+			filepath: "app.env",
 			content:  "DB_USERNAME=admin\nDB_PASSWORD=somepw",
 			expected: resmaptest_test.NewRmBuilder(t, rf).Add(
 				map[string]interface{}{
@@ -161,7 +164,7 @@ func TestNewFromConfigMaps(t *testing.T) {
 				},
 			},
 			},
-			filepath: "/whatever/project/app-init.ini",
+			filepath: "app-init.ini",
 			content:  "FOO=bar\nBAR=baz\n",
 			expected: resmaptest_test.NewRmBuilder(t, rf).Add(
 				map[string]interface{}{
@@ -209,16 +212,18 @@ BAR=baz
 		// files/literal/env etc.
 	}
 	for _, tc := range testCases {
-		if fErr := l.AddFile(tc.filepath, []byte(tc.content)); fErr != nil {
-			t.Fatalf("Error adding fake file: %v\n", fErr)
+		if tc.filepath != "" {
+			if fErr := fSys.WriteFile(tc.filepath, []byte(tc.content)); fErr != nil {
+				t.Fatalf("error adding file '%s': %v\n", tc.filepath, fErr)
+			}
 		}
-		r, err := rmF.NewResMapFromConfigMapArgs(kvLdr, nil, tc.input)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if err = tc.expected.ErrorIfNotEqualLists(r); err != nil {
-			t.Fatalf("testcase: %q, err: %v", tc.description, err)
-		}
+		r, err := rmF.NewResMapFromConfigMapArgs(kvLdr, tc.input)
+		assert.NoError(t, err, tc.description)
+		rYaml, err := r.AsYaml()
+		assert.NoError(t, err, tc.description)
+		expYaml, err := tc.expected.AsYaml()
+		assert.NoError(t, err, tc.description)
+		assert.Equal(t, expYaml, rYaml)
 	}
 }
 
@@ -238,15 +243,17 @@ func TestNewResMapFromSecretArgs(t *testing.T) {
 		},
 	}
 	fSys := filesys.MakeFsInMemory()
-	fSys.Mkdir(".")
+	fSys.Mkdir(filesys.SelfDir)
 
 	actual, err := rmF.NewResMapFromSecretArgs(
 		kv.NewLoader(
 			loader.NewFileLoaderAtRoot(fSys),
-			valtest_test.MakeFakeValidator()), nil, secrets)
+			valtest_test.MakeFakeValidator()), secrets)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	actYaml, err := actual.AsYaml()
+	assert.NoError(t, err)
 
 	expected := resmaptest_test.NewRmBuilder(t, rf).Add(
 		map[string]interface{}{
@@ -261,7 +268,84 @@ func TestNewResMapFromSecretArgs(t *testing.T) {
 				"DB_PASSWORD": base64.StdEncoding.EncodeToString([]byte("somepw")),
 			},
 		}).ResMap()
-	if err = expected.ErrorIfNotEqualLists(actual); err != nil {
-		t.Fatalf("error: %s", err)
+	expYaml, err := expected.AsYaml()
+	assert.NoError(t, err)
+
+	assert.Equal(t, string(expYaml), string(actYaml))
+}
+
+func TestFromRNodeSlice(t *testing.T) {
+	type testcase struct {
+		input    string
+		expected ResMap
+	}
+	testcases := map[string]testcase{
+		"no resource": {
+			input:    "---",
+			expected: resmaptest_test.NewRmBuilder(t, rf).ResMap(),
+		},
+		"single resource": {
+			input: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: namespace-reader
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - watch
+  - list
+      `,
+			expected: resmaptest_test.NewRmBuilder(t, rf).Add(
+				map[string]interface{}{
+					"apiVersion": "rbac.authorization.k8s.io/v1",
+					"kind":       "ClusterRole",
+					"metadata": map[string]interface{}{
+						"name": "namespace-reader",
+					},
+					"rules": []interface{}{
+						map[string]interface{}{
+							"apiGroups": []interface{}{
+								"",
+							},
+							"resources": []interface{}{
+								"namespaces",
+							},
+							"verbs": []interface{}{
+								"get",
+								"watch",
+								"list",
+							},
+						},
+					},
+				}).ResMap(),
+		},
+		"local config": {
+			// local config should be ignored
+			input: `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-config
+  annotations:
+    config.kubernetes.io/local-config: 'true'
+`,
+			expected: resmaptest_test.NewRmBuilder(t, rf).ResMap(),
+		},
+	}
+	for name := range testcases {
+		tc := testcases[name]
+		t.Run(name, func(t *testing.T) {
+			rm, err := rmF.NewResMapFromRNodeSlice(
+				[]*yaml.RNode{yaml.MustParse(tc.input)})
+			if err != nil {
+				t.Fatalf("unexpected error in test case [%s]: %v", name, err)
+			}
+			if err = tc.expected.ErrorIfNotEqualLists(rm); err != nil {
+				t.Fatalf("error in test case [%s]: %s", name, err)
+			}
+		})
 	}
 }

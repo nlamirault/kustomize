@@ -6,16 +6,14 @@ package main_test
 import (
 	"testing"
 
-	"sigs.k8s.io/kustomize/api/testutils/kusttest"
+	kusttest_test "sigs.k8s.io/kustomize/api/testutils/kusttest"
 )
 
 func TestStringPrefixerPlugin(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"someteam.example.com", "v1", "StringPrefixer")
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
+	th := kusttest_test.MakeEnhancedHarness(t).
+		BuildGoPlugin(
+			"someteam.example.com", "v1", "StringPrefixer")
+	defer th.Reset()
 
 	m := th.LoadAndRunTransformer(`
 apiVersion: someteam.example.com/v1
@@ -29,7 +27,7 @@ metadata:
   name: meatball
 `)
 
-	th.AssertActualEqualsExpected(m, `
+	th.AssertActualEqualsExpectedNoIdAnnotations(m, `
 apiVersion: apps/v1
 kind: MeatBall
 metadata:

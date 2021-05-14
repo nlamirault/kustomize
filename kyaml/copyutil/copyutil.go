@@ -6,11 +6,13 @@ package copyutil
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/sergi/go-diff/diffmatchpatch"
 	"sigs.k8s.io/kustomize/kyaml/sets"
 )
 
@@ -23,7 +25,7 @@ func CopyDir(src string, dst string) error {
 		// don't copy the .git dir
 		if path != src {
 			rel := strings.TrimPrefix(path, src)
-			if strings.HasPrefix(rel, string(filepath.Separator)+".git") {
+			if IsDotGitFolder(rel) {
 				return nil
 			}
 		}
@@ -65,7 +67,7 @@ func Diff(sourceDir, destDir string) (sets.String, error) {
 		}
 
 		// skip git repo if it exists
-		if strings.Contains(path, ".git") {
+		if IsDotGitFolder(path) {
 			return nil
 		}
 
@@ -84,7 +86,7 @@ func Diff(sourceDir, destDir string) (sets.String, error) {
 		}
 
 		// skip git repo if it exists
-		if strings.Contains(path, ".git") {
+		if IsDotGitFolder(path) {
 			return nil
 		}
 
@@ -119,10 +121,77 @@ func Diff(sourceDir, destDir string) (sets.String, error) {
 			return diff, err
 		}
 		if !bytes.Equal(b1, b2) {
+			fmt.Println(PrettyFileDiff(string(b1), string(b2)))
 			diff.Insert(f)
 		}
 	}
-
 	// return the differing files
 	return diff, nil
+}
+
+// IsDotGitFolder checks if the provided path is either the .git folder or
+// a file underneath the .git folder.
+func IsDotGitFolder(path string) bool {
+	cleanPath := filepath.ToSlash(filepath.Clean(path))
+	for _, c := range strings.Split(cleanPath, "/") {
+		if c == ".git" {
+			return true
+		}
+	}
+	return false
+}
+
+// PrettyFileDiff takes the content of two files and returns the pretty diff
+func PrettyFileDiff(s1, s2 string) string {
+	dmp := diffmatchpatch.New()
+	wSrc, wDst, warray := dmp.DiffLinesToRunes(s1, s2)
+	diffs := dmp.DiffMainRunes(wSrc, wDst, false)
+	diffs = dmp.DiffCharsToLines(diffs, warray)
+	return dmp.DiffPrettyText(diffs)
+}
+
+// SyncFile copies file from src file path to a dst file path by replacement
+// deletes dst file if src file doesn't exist
+func SyncFile(src, dst string) error {
+	srcFileInfo, err := os.Stat(src)
+	if err != nil {
+		// delete dst if source doesn't exist
+		if err = deleteFile(dst); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	input, err := ioutil.ReadFile(src)
+	if err != nil {
+		return err
+	}
+
+	var filePerm os.FileMode
+
+	// get the destination file perm if file exists
+	dstFileInfo, err := os.Stat(dst)
+	if err != nil {
+		// get source file perm if destination file doesn't exist
+		filePerm = srcFileInfo.Mode().Perm()
+	} else {
+		filePerm = dstFileInfo.Mode().Perm()
+	}
+
+	err = ioutil.WriteFile(dst, input, filePerm)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// deleteFile deletes file from path, returns no error if file doesn't exist
+func deleteFile(path string) error {
+	_, err := os.Stat(path)
+	if err != nil {
+		// return nil if file doesn't exist
+		return nil
+	}
+	return os.Remove(path)
 }

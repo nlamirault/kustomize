@@ -4,57 +4,13 @@
 package kio_test
 
 import (
-	"io/ioutil"
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	. "sigs.k8s.io/kustomize/kyaml/kio"
-	// "sigs.k8s.io/kustomize/kyaml/testutil"
 )
-
-// setup creates directories and files for testing
-type setup struct {
-	// root is the tmp directory
-	root string
-}
-
-// setupDirectories creates directories for reading test configuration from
-func setupDirectories(t *testing.T, dirs ...string) setup {
-	d, err := ioutil.TempDir("", "kyaml-test")
-	if !assert.NoError(t, err) {
-		assert.FailNow(t, err.Error())
-	}
-	err = os.Chdir(d)
-	if !assert.NoError(t, err) {
-		assert.FailNow(t, err.Error())
-	}
-	for _, s := range dirs {
-		err = os.MkdirAll(s, 0700)
-		if !assert.NoError(t, err) {
-			assert.FailNow(t, err.Error())
-		}
-	}
-	return setup{root: d}
-}
-
-// writeFile writes a file under the test directory
-func (s setup) writeFile(t *testing.T, path string, value []byte) {
-	err := os.MkdirAll(filepath.Dir(filepath.Join(s.root, path)), 0700)
-	if !assert.NoError(t, err) {
-		assert.FailNow(t, err.Error())
-	}
-	err = ioutil.WriteFile(filepath.Join(s.root, path), value, 0600)
-	if !assert.NoError(t, err) {
-		assert.FailNow(t, err.Error())
-	}
-}
-
-// clean deletes the test config
-func (s setup) clean() {
-	os.RemoveAll(s.root)
-}
 
 var readFileA = []byte(`---
 a: b #first
@@ -70,6 +26,17 @@ g:
   - j
 `)
 
+var readFileC = []byte(`---
+a: b #third
+metadata:
+  annotations:
+`)
+
+var readFileD = []byte(`---
+a: b #forth
+metadata:
+`)
+
 var pkgFile = []byte(``)
 
 func TestLocalPackageReader_Read_empty(t *testing.T) {
@@ -79,20 +46,21 @@ func TestLocalPackageReader_Read_empty(t *testing.T) {
 		assert.Contains(t, err.Error(), "must specify package path")
 	}
 	assert.Nil(t, nodes)
-
 }
 
 func TestLocalPackageReader_Read_pkg(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("b_test.yaml"), readFileB)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("b_test.yaml"), readFileB)
+	s.WriteFile(t, filepath.Join("c_test.yaml"), readFileC)
+	s.WriteFile(t, filepath.Join("d_test.yaml"), readFileD)
 
 	paths := []struct {
 		path string
 	}{
 		{path: "./"},
-		{path: s.root},
+		{path: s.Root},
 	}
 	for _, p := range paths {
 		rfr := LocalPackageReader{PackagePath: p.path}
@@ -101,23 +69,21 @@ func TestLocalPackageReader_Read_pkg(t *testing.T) {
 			return
 		}
 
-		if !assert.Len(t, nodes, 3) {
+		if !assert.Len(t, nodes, 5) {
 			return
 		}
 		expected := []string{
 			`a: b #first
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: .
-    config.kubernetes.io/path: a_test.yaml
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a_test.yaml'
 `,
 			`c: d # second
 metadata:
   annotations:
-    config.kubernetes.io/index: 1
-    config.kubernetes.io/package: .
-    config.kubernetes.io/path: a_test.yaml
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a_test.yaml'
 `,
 			`# second thing
 e: f
@@ -127,9 +93,142 @@ g:
   - j
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: .
-    config.kubernetes.io/path: b_test.yaml
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'b_test.yaml'
+`,
+			`a: b #third
+metadata:
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'c_test.yaml'
+`,
+			`a: b #forth
+metadata:
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'd_test.yaml'
+`,
+		}
+		for i := range nodes {
+			val, err := nodes[i].String()
+			if !assert.NoError(t, err) {
+				return
+			}
+			if !assert.Equal(t, expected[i], val) {
+				return
+			}
+		}
+	}
+}
+
+func TestLocalPackageReader_Read_pkgAndSkipFile(t *testing.T) {
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("b_test.yaml"), readFileB)
+	s.WriteFile(t, filepath.Join("c_test.yaml"), readFileC)
+	s.WriteFile(t, filepath.Join("d_test.yaml"), readFileD)
+
+	paths := []struct {
+		path string
+	}{
+		{path: "./"},
+		{path: s.Root},
+	}
+	for _, p := range paths {
+		rfr := LocalPackageReader{
+			PackagePath: p.path,
+			FileSkipFunc: func(relPath string) bool {
+				return relPath == "d_test.yaml"
+			},
+		}
+		nodes, err := rfr.Read()
+		if !assert.NoError(t, err) {
+			return
+		}
+
+		if !assert.Len(t, nodes, 4) {
+			return
+		}
+		expected := []string{
+			`a: b #first
+metadata:
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a_test.yaml'
+`,
+			`c: d # second
+metadata:
+  annotations:
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a_test.yaml'
+`,
+			`# second thing
+e: f
+g:
+  h:
+  - i # has a list
+  - j
+metadata:
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'b_test.yaml'
+`,
+			`a: b #third
+metadata:
+  annotations:
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'c_test.yaml'
+`,
+		}
+		for i := range nodes {
+			val, err := nodes[i].String()
+			if !assert.NoError(t, err) {
+				return
+			}
+			if !assert.Equal(t, expected[i], val) {
+				return
+			}
+		}
+	}
+}
+
+func TestLocalPackageReader_Read_JSON(t *testing.T) {
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+
+	s.WriteFile(t, filepath.Join("a_test.json"), []byte(`{
+  "a": "b"
+}`))
+	s.WriteFile(t, filepath.Join("b_test.json"), []byte(`{
+  "e": "f",
+  "g": {
+    "h": ["i", "j"]
+  }
+}`))
+
+	paths := []struct {
+		path string
+	}{
+		{path: "./"},
+		{path: s.Root},
+	}
+	for _, p := range paths {
+		rfr := LocalPackageReader{PackagePath: p.path, MatchFilesGlob: []string{"*.json"}}
+		nodes, err := rfr.Read()
+		if !assert.NoError(t, err) {
+			return
+		}
+
+		if !assert.Len(t, nodes, 2) {
+			t.FailNow()
+		}
+		// TODO: Fix https://github.com/go-yaml/yaml/issues/44 so these are printed correctly
+		expected := []string{
+			`{"a": "b", metadata: {annotations: {config.kubernetes.io/index: '0', config.kubernetes.io/path: 'a_test.json'}}}
+`,
+			`{"e": "f", "g": {"h": ["i", "j"]}, metadata: {annotations: {config.kubernetes.io/index: '0',
+      config.kubernetes.io/path: 'b_test.json'}}}
 `,
 		}
 		for i := range nodes {
@@ -145,16 +244,16 @@ metadata:
 }
 
 func TestLocalPackageReader_Read_file(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("b_test.yaml"), readFileB)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("b_test.yaml"), readFileB)
 
 	paths := []struct {
 		path string
 	}{
 		{path: "./"},
-		{path: s.root},
+		{path: s.Root},
 	}
 	for _, p := range paths {
 		rfr := LocalPackageReader{PackagePath: filepath.Join(p.path, "a_test.yaml")}
@@ -170,16 +269,14 @@ func TestLocalPackageReader_Read_file(t *testing.T) {
 			`a: b #first
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: .
-    config.kubernetes.io/path: a_test.yaml
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a_test.yaml'
 `,
 			`c: d # second
 metadata:
   annotations:
-    config.kubernetes.io/index: 1
-    config.kubernetes.io/package: .
-    config.kubernetes.io/path: a_test.yaml
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a_test.yaml'
 `,
 		}
 		for i := range nodes {
@@ -195,19 +292,18 @@ metadata:
 }
 
 func TestLocalPackageReader_Read_pkgOmitAnnotations(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("b_test.yaml"), readFileB)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("b_test.yaml"), readFileB)
 
 	paths := []struct {
 		path string
 	}{
 		{path: "./"},
-		{path: s.root},
+		{path: s.Root},
 	}
 	for _, p := range paths {
-
 		// empty path
 		rfr := LocalPackageReader{PackagePath: p.path, OmitReaderAnnotations: true}
 		nodes, err := rfr.Read()
@@ -244,16 +340,16 @@ g:
 }
 
 func TestLocalPackageReader_Read_nestedDirs(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("a", "b", "b_test.yaml"), readFileB)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("a", "b", "b_test.yaml"), readFileB)
 
 	paths := []struct {
 		path string
 	}{
 		{path: "./"},
-		{path: s.root},
+		{path: s.Root},
 	}
 	for _, p := range paths {
 		// empty path
@@ -270,16 +366,14 @@ func TestLocalPackageReader_Read_nestedDirs(t *testing.T) {
 			`a: b #first
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
 `,
 			`c: d # second
 metadata:
   annotations:
-    config.kubernetes.io/index: 1
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
 `,
 			`# second thing
 e: f
@@ -289,9 +383,8 @@ g:
   - j
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/b_test.yaml
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}b_test.yaml'
 `,
 		}
 		for i := range nodes {
@@ -299,7 +392,8 @@ metadata:
 			if !assert.NoError(t, err) {
 				return
 			}
-			if !assert.Equal(t, expected[i], val) {
+			want := strings.ReplaceAll(expected[i], "${SEP}", string(filepath.Separator))
+			if !assert.Equal(t, want, val) {
 				return
 			}
 		}
@@ -307,13 +401,13 @@ metadata:
 }
 
 func TestLocalPackageReader_Read_matchRegex(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("a", "b", "b_test.yaml"), readFileB)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("a", "b", "b_test.yaml"), readFileB)
 
 	// empty path
-	rfr := LocalPackageReader{PackagePath: s.root, MatchFilesGlob: []string{`a*.yaml`}}
+	rfr := LocalPackageReader{PackagePath: s.Root, MatchFilesGlob: []string{`a*.yaml`}}
 	nodes, err := rfr.Read()
 	if !assert.NoError(t, err) {
 		assert.FailNow(t, err.Error())
@@ -323,36 +417,38 @@ func TestLocalPackageReader_Read_matchRegex(t *testing.T) {
 		assert.FailNow(t, "wrong number items")
 	}
 
-	val, err := nodes[0].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `a: b #first
+	expected := []string{
+		`a: b #first
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
-`, val)
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
+`,
+		`c: d # second
+metadata:
+  annotations:
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
+`,
+	}
 
-	val, err = nodes[1].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `c: d # second
-metadata:
-  annotations:
-    config.kubernetes.io/index: 1
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
-`, val)
+	for i, node := range nodes {
+		val, err := node.String()
+		assert.NoError(t, err)
+		want := strings.ReplaceAll(expected[i], "${SEP}", string(filepath.Separator))
+		assert.Equal(t, want, val)
+	}
 }
 
 func TestLocalPackageReader_Read_skipSubpackage(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("a", "c", "c_test.yaml"), readFileB)
-	s.writeFile(t, filepath.Join("a", "c", "pkgFile"), pkgFile)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("a", "c", "c_test.yaml"), readFileB)
+	s.WriteFile(t, filepath.Join("a", "c", "pkgFile"), pkgFile)
 
 	// empty path
-	rfr := LocalPackageReader{PackagePath: s.root, PackageFileName: "pkgFile"}
+	rfr := LocalPackageReader{PackagePath: s.Root, PackageFileName: "pkgFile"}
 	nodes, err := rfr.Read()
 	if !assert.NoError(t, err) {
 		assert.FailNow(t, err.Error())
@@ -362,36 +458,38 @@ func TestLocalPackageReader_Read_skipSubpackage(t *testing.T) {
 		assert.FailNow(t, "wrong number items")
 	}
 
-	val, err := nodes[0].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `a: b #first
+	expected := []string{
+		`a: b #first
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
-`, val)
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
+`,
+		`c: d # second
+metadata:
+  annotations:
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
+`,
+	}
 
-	val, err = nodes[1].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `c: d # second
-metadata:
-  annotations:
-    config.kubernetes.io/index: 1
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
-`, val)
+	for i, node := range nodes {
+		val, err := node.String()
+		assert.NoError(t, err)
+		want := strings.ReplaceAll(expected[i], "${SEP}", string(filepath.Separator))
+		assert.Equal(t, want, val)
+	}
 }
 
 func TestLocalPackageReader_Read_includeSubpackage(t *testing.T) {
-	s := setupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
-	defer s.clean()
-	s.writeFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
-	s.writeFile(t, filepath.Join("a", "c", "c_test.yaml"), readFileB)
-	s.writeFile(t, filepath.Join("a", "c", "pkgFile"), pkgFile)
+	s := SetupDirectories(t, filepath.Join("a", "b"), filepath.Join("a", "c"))
+	defer s.Clean()
+	s.WriteFile(t, filepath.Join("a", "b", "a_test.yaml"), readFileA)
+	s.WriteFile(t, filepath.Join("a", "c", "c_test.yaml"), readFileB)
+	s.WriteFile(t, filepath.Join("a", "c", "pkgFile"), pkgFile)
 
 	// empty path
-	rfr := LocalPackageReader{PackagePath: s.root, IncludeSubpackages: true, PackageFileName: "pkgFile"}
+	rfr := LocalPackageReader{PackagePath: s.Root, IncludeSubpackages: true, PackageFileName: "pkgFile"}
 	nodes, err := rfr.Read()
 	if !assert.NoError(t, err) {
 		assert.FailNow(t, err.Error())
@@ -400,29 +498,21 @@ func TestLocalPackageReader_Read_includeSubpackage(t *testing.T) {
 	if !assert.Len(t, nodes, 3) {
 		assert.FailNow(t, "wrong number items")
 	}
-	val, err := nodes[0].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `a: b #first
+
+	expected := []string{
+		`a: b #first
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
-`, val)
-
-	val, err = nodes[1].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `c: d # second
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
+`,
+		`c: d # second
 metadata:
   annotations:
-    config.kubernetes.io/index: 1
-    config.kubernetes.io/package: a/b
-    config.kubernetes.io/path: a/b/a_test.yaml
-`, val)
-
-	val, err = nodes[2].String()
-	assert.NoError(t, err)
-	assert.Equal(t, `# second thing
+    config.kubernetes.io/index: '1'
+    config.kubernetes.io/path: 'a${SEP}b${SEP}a_test.yaml'
+`,
+		`# second thing
 e: f
 g:
   h:
@@ -430,10 +520,17 @@ g:
   - j
 metadata:
   annotations:
-    config.kubernetes.io/index: 0
-    config.kubernetes.io/package: a/c
-    config.kubernetes.io/path: a/c/c_test.yaml
-`, val)
+    config.kubernetes.io/index: '0'
+    config.kubernetes.io/path: 'a${SEP}c${SEP}c_test.yaml'
+`,
+	}
+
+	for i, node := range nodes {
+		val, err := node.String()
+		assert.NoError(t, err)
+		want := strings.ReplaceAll(expected[i], "${SEP}", string(filepath.Separator))
+		assert.Equal(t, want, val)
+	}
 }
 
 // func TestLocalPackageReaderWriter_DeleteFiles(t *testing.T) {

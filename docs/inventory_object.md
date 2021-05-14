@@ -1,4 +1,8 @@
-# inventory directive in kustomization.yaml
+# [DEPRECATED] inventory directive in kustomization.yaml
+
+**Inventory object has been deprecated in Kustomize. Please use [kpt live apply](https://googlecontainertools.github.io/kpt/reference/live/apply/).**
+
+---
 
 New in v2.1.0, a kustomization file may have an `inventory` field:
 ```yaml
@@ -56,7 +60,7 @@ The _inventory_ ConfigMap contains two special annotations:
   The value of this annotation is a hash that is
   computed from the list of items in the Inventory
 
-Basically, this inventory object acts a record of objects that are applied as a group.
+Basically, this inventory object acts as a record of objects that are applied as a group.
 This object can be consumed by a client such as
 [cli-experimental](https://github.com/kubernetes-sigs/cli-experimental).
 The client can recognize the inventory annotations and take proper actions

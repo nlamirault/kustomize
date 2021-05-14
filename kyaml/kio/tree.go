@@ -6,6 +6,7 @@ package kio
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,17 +25,20 @@ const (
 
 	// TreeStructureOwners configures TreeWriter to generate the tree structure off of the
 	// Resource owners.
-	TreeStructureGraph TreeStructure = "graph"
+	TreeStructureGraph TreeStructure = "owners"
 )
+
+var GraphStructures = []string{string(TreeStructureGraph), string(TreeStructurePackage)}
 
 // TreeWriter prints the package structured as a tree.
 // TODO(pwittrock): test this package better.  it is lower-risk since it is only
 // used for printing rather than updating or editing.
 type TreeWriter struct {
-	Writer    io.Writer
-	Root      string
-	Fields    []TreeWriterField
-	Structure TreeStructure
+	Writer          io.Writer
+	Root            string
+	Fields          []TreeWriterField
+	Structure       TreeStructure
+	OpenAPIFileName string
 }
 
 // TreeWriterField configures a Resource field to be included in the tree
@@ -70,7 +74,7 @@ func (p TreeWriter) packageStructure(nodes []*yaml.RNode) error {
 		// create a new branch for the package
 		createOk := pkg != "." // special edge case logic for tree on current working dir
 		if createOk {
-			branch = branch.AddBranch(pkg)
+			branch = branch.AddBranch(branchName(p.Root, pkg, p.OpenAPIFileName))
 		}
 
 		// cache the branch for this package
@@ -89,6 +93,19 @@ func (p TreeWriter) packageStructure(nodes []*yaml.RNode) error {
 	return err
 }
 
+// branchName takes the root directory and relative path to the directory
+// and returns the branch name
+func branchName(root, dirRelPath, openAPIFileName string) string {
+	name := filepath.Base(dirRelPath)
+	_, err := os.Stat(filepath.Join(root, dirRelPath, openAPIFileName))
+	if !os.IsNotExist(err) {
+		// add Pkg: prefix indicating that it is a separate package as it has
+		// openAPIFile
+		return fmt.Sprintf("Pkg: %s", name)
+	}
+	return name
+}
+
 // Write writes the ascii tree to p.Writer
 func (p TreeWriter) Write(nodes []*yaml.RNode) error {
 	switch p.Structure {
@@ -96,9 +113,15 @@ func (p TreeWriter) Write(nodes []*yaml.RNode) error {
 		return p.packageStructure(nodes)
 	case TreeStructureGraph:
 		return p.graphStructure(nodes)
-	default:
-		return p.packageStructure(nodes)
 	}
+
+	// If any resource has an owner reference, default to the graph structure. Otherwise, use package structure.
+	for _, node := range nodes {
+		if owners, _ := node.Pipe(yaml.Lookup("metadata", "ownerReferences")); owners != nil {
+			return p.graphStructure(nodes)
+		}
+	}
+	return p.packageStructure(nodes)
 }
 
 // node wraps a tree node, and any children nodes
@@ -230,10 +253,10 @@ func ownerToString(node *yaml.RNode) (string, error) {
 	owner := elements[0]
 	var kind, name string
 
-	if value := owner.Field("kind"); !yaml.IsFieldEmpty(value) {
+	if value := owner.Field("kind"); !value.IsNilOrEmpty() {
 		kind = value.Value.YNode().Value
 	}
-	if value := owner.Field("name"); !yaml.IsFieldEmpty(value) {
+	if value := owner.Field("name"); !value.IsNilOrEmpty() {
 		name = value.Value.YNode().Value
 	}
 
@@ -250,7 +273,7 @@ func (p TreeWriter) index(nodes []*yaml.RNode) map[string][]*yaml.RNode {
 			// not a resource
 			continue
 		}
-		pkg := meta.Annotations[kioutil.PackageAnnotation]
+		pkg := filepath.Dir(meta.Annotations[kioutil.PathAnnotation])
 		indexByPackage[pkg] = append(indexByPackage[pkg], nodes[i])
 	}
 	return indexByPackage
@@ -283,8 +306,8 @@ func compareNodes(i, j *yaml.RNode) bool {
 	}
 
 	// compare apiVersion
-	if metai.ApiVersion != metaj.ApiVersion {
-		return metai.ApiVersion < metaj.ApiVersion
+	if metai.APIVersion != metaj.APIVersion {
+		return metai.APIVersion < metaj.APIVersion
 	}
 	return true
 }

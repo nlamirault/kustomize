@@ -6,19 +6,15 @@ package main_test
 import (
 	"testing"
 
-	"sigs.k8s.io/kustomize/api/testutils/kusttest"
+	kusttest_test "sigs.k8s.io/kustomize/api/testutils/kusttest"
 )
 
 func TestAnnotationsTransformer(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("AnnotationsTransformer")
+	defer th.Reset()
 
-	tc.BuildGoPlugin(
-		"builtin", "", "AnnotationsTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
-
-	rm := th.LoadAndRunTransformer(`
+	th.RunTransformerAndCheckResult(`
 apiVersion: builtin
 kind: AnnotationsTransformer
 metadata:
@@ -26,6 +22,10 @@ metadata:
 annotations:
   app: myApp
   greeting/morning: a string with blanks
+  booleanNaked: true
+  booleanQuoted: "true"
+  numberNaked: 42
+  numberQuoted: "42"
 fieldSpecs:
   - path: metadata/annotations
     create: true
@@ -37,15 +37,17 @@ metadata:
 spec:
   ports:
   - port: 7002
-`)
-
-	th.AssertActualEqualsExpected(rm, `
+`, `
 apiVersion: v1
 kind: Service
 metadata:
   annotations:
     app: myApp
+    booleanNaked: "true"
+    booleanQuoted: "true"
     greeting/morning: a string with blanks
+    numberNaked: "42"
+    numberQuoted: "42"
   name: myService
 spec:
   ports:

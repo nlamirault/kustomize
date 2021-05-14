@@ -17,7 +17,6 @@ const (
 	ConfigMapGenerator
 	HashTransformer
 	ImageTagTransformer
-	InventoryTransformer
 	LabelTransformer
 	LegacyOrderTransformer
 	NamespaceTransformer
@@ -27,6 +26,9 @@ const (
 	PrefixSuffixTransformer
 	ReplicaCountTransformer
 	SecretGenerator
+	ValueAddTransformer
+	HelmChartInflationGenerator
+	ReplacementTransformer
 )
 
 var stringToBuiltinPluginTypeMap map[string]BuiltinPluginType
@@ -55,15 +57,15 @@ func GetBuiltinPluginType(n string) BuiltinPluginType {
 }
 
 var GeneratorFactories = map[BuiltinPluginType]func() resmap.GeneratorPlugin{
-	ConfigMapGenerator: builtins.NewConfigMapGeneratorPlugin,
-	SecretGenerator:    builtins.NewSecretGeneratorPlugin,
+	ConfigMapGenerator:          builtins.NewConfigMapGeneratorPlugin,
+	SecretGenerator:             builtins.NewSecretGeneratorPlugin,
+	HelmChartInflationGenerator: builtins.NewHelmChartInflationGeneratorPlugin,
 }
 
 var TransformerFactories = map[BuiltinPluginType]func() resmap.TransformerPlugin{
 	AnnotationsTransformer:         builtins.NewAnnotationsTransformerPlugin,
 	HashTransformer:                builtins.NewHashTransformerPlugin,
 	ImageTagTransformer:            builtins.NewImageTagTransformerPlugin,
-	InventoryTransformer:           builtins.NewInventoryTransformerPlugin,
 	LabelTransformer:               builtins.NewLabelTransformerPlugin,
 	LegacyOrderTransformer:         builtins.NewLegacyOrderTransformerPlugin,
 	NamespaceTransformer:           builtins.NewNamespaceTransformerPlugin,
@@ -71,5 +73,7 @@ var TransformerFactories = map[BuiltinPluginType]func() resmap.TransformerPlugin
 	PatchStrategicMergeTransformer: builtins.NewPatchStrategicMergeTransformerPlugin,
 	PatchTransformer:               builtins.NewPatchTransformerPlugin,
 	PrefixSuffixTransformer:        builtins.NewPrefixSuffixTransformerPlugin,
+	ReplacementTransformer:         builtins.NewReplacementTransformerPlugin,
 	ReplicaCountTransformer:        builtins.NewReplicaCountTransformerPlugin,
+	ValueAddTransformer:            builtins.NewValueAddTransformerPlugin,
 }

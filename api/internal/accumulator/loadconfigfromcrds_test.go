@@ -7,12 +7,12 @@ import (
 	"reflect"
 	"testing"
 
-	"sigs.k8s.io/kustomize/api/ifc"
+	"sigs.k8s.io/kustomize/api/filesys"
 	. "sigs.k8s.io/kustomize/api/internal/accumulator"
-	"sigs.k8s.io/kustomize/api/internal/loadertest"
 	"sigs.k8s.io/kustomize/api/internal/plugins/builtinconfig"
-	"sigs.k8s.io/kustomize/api/resid"
+	"sigs.k8s.io/kustomize/api/loader"
 	"sigs.k8s.io/kustomize/api/types"
+	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
 // This defines two CRD's:  Bee and MyKind.
@@ -41,7 +41,7 @@ More info: https://git.k8s.io/community/contributors/devel/api-conventions.md#ty
 					"type": "string"
 				},
 				"metadata": {
-					"$ref": "sigs.k8s.io/kustomize/pseudo/k8s/apimachinery/pkg/apis/meta/v1.ObjectMeta"
+					"$ref": "k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"
 				},
 				"spec": {
 					"$ref": "github.com/example/pkg/apis/jingfang/v1beta1.BeeSpec"
@@ -54,7 +54,7 @@ More info: https://git.k8s.io/community/contributors/devel/api-conventions.md#ty
 		"Dependencies": [
 			"github.com/example/pkg/apis/jingfang/v1beta1.BeeSpec",
 			"github.com/example/pkg/apis/jingfang/v1beta1.BeeStatus",
-			"sigs.k8s.io/kustomize/pseudo/k8s/apimachinery/pkg/apis/meta/v1.ObjectMeta"
+			"k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"
 		]
 	},
 	"github.com/example/pkg/apis/jingfang/v1beta1.BeeSpec": {
@@ -86,7 +86,7 @@ In CamelCase. More info: https://git.k8s.io/community/contributors/devel/api-con
 					"type": "string"
 				},
 				"metadata": {
-					"$ref": "sigs.k8s.io/kustomize/pseudo/k8s/apimachinery/pkg/apis/meta/v1.ObjectMeta"
+					"$ref": "k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"
 				},
 				"spec": {
 					"$ref": "github.com/example/pkg/apis/jingfang/v1beta1.MyKindSpec"
@@ -99,7 +99,7 @@ In CamelCase. More info: https://git.k8s.io/community/contributors/devel/api-con
 		"Dependencies": [
 			"github.com/example/pkg/apis/jingfang/v1beta1.MyKindSpec",
 			"github.com/example/pkg/apis/jingfang/v1beta1.MyKindStatus",
-			"sigs.k8s.io/kustomize/pseudo/k8s/apimachinery/pkg/apis/meta/v1.ObjectMeta"
+			"k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"
 		]
 	},
 	"github.com/example/pkg/apis/jingfang/v1beta1.MyKindSpec": {
@@ -116,13 +116,13 @@ In CamelCase. More info: https://git.k8s.io/community/contributors/devel/api-con
 If it is not set we generate a secret dynamically",
 					"x-kubernetes-object-ref-api-version": "v1",
 					"x-kubernetes-object-ref-kind": "Secret",
-					"$ref": "sigs.k8s.io/kustomize/pseudo/k8s/api/core/v1.LocalObjectReference"
+					"$ref": "k8s.io/api/core/v1.LocalObjectReference"
 				}
 			}
 		},
 		"Dependencies": [
 			"github.com/example/pkg/apis/jingfang/v1beta1.Bee",
-			"sigs.k8s.io/kustomize/pseudo/k8s/api/core/v1.LocalObjectReference"
+			"k8s.io/api/core/v1.LocalObjectReference"
 		]
 	},
 	"github.com/example/pkg/apis/jingfang/v1beta1.MyKindStatus": {
@@ -135,34 +135,23 @@ If it is not set we generate a secret dynamically",
 `
 )
 
-func makeLoader(t *testing.T) ifc.Loader {
-	ldr := loadertest.NewFakeLoader("/testpath")
-	err := ldr.AddFile("/testpath/crd.json", []byte(crdContent))
-	if err != nil {
-		t.Fatalf("Failed to setup fake ldr.")
-	}
-	return ldr
-}
-
 func TestLoadCRDs(t *testing.T) {
 	nbrs := []builtinconfig.NameBackReferences{
 		{
 			Gvk: resid.Gvk{Kind: "Secret", Version: "v1"},
-			FieldSpecs: []types.FieldSpec{
+			Referrers: []types.FieldSpec{
 				{
-					CreateIfNotPresent: false,
-					Gvk:                resid.Gvk{Kind: "MyKind"},
-					Path:               "spec/secretRef/name",
+					Gvk:  resid.Gvk{Kind: "MyKind"},
+					Path: "spec/secretRef/name",
 				},
 			},
 		},
 		{
 			Gvk: resid.Gvk{Kind: "Bee", Version: "v1beta1"},
-			FieldSpecs: []types.FieldSpec{
+			Referrers: []types.FieldSpec{
 				{
-					CreateIfNotPresent: false,
-					Gvk:                resid.Gvk{Kind: "MyKind"},
-					Path:               "spec/beeRef/name",
+					Gvk:  resid.Gvk{Kind: "MyKind"},
+					Path: "spec/beeRef/name",
 				},
 			},
 		},
@@ -172,7 +161,14 @@ func TestLoadCRDs(t *testing.T) {
 		NameReference: nbrs,
 	}
 
-	actualTc, err := LoadConfigFromCRDs(makeLoader(t), []string{"crd.json"})
+	fSys := filesys.MakeFsInMemory()
+	fSys.WriteFile("/testpath/crd.json", []byte(crdContent))
+	ldr, err := loader.NewLoader(loader.RestrictionRootOnly, "/testpath", fSys)
+	if err != nil {
+		t.Fatalf("unexpected error:%v", err)
+	}
+
+	actualTc, err := LoadConfigFromCRDs(ldr, []string{"crd.json"})
 	if err != nil {
 		t.Fatalf("unexpected error:%v", err)
 	}

@@ -5,11 +5,15 @@ English | [简体中文](zh/README.md)
 To run these examples, your `$PATH` must contain `kustomize`.
 See the [installation instructions](../docs/INSTALL.md).
 
-These examples are [tested](../travis/pre-commit.sh)
+These examples are [tested](../scripts/kyaml-pre-commit.sh)
 to work with the latest _released_ version of kustomize.
 
 Basic Usage
 
+  * [valueAdd](valueAdd.md) - 
+    Add a simple string value easily to various fields, including
+    fields that happen to hold file paths.
+    
   * [configGenerations](configGeneration.md) -
    Rolling update when ConfigMapGenerator changes.
 
@@ -70,3 +74,5 @@ Multi Variant Examples
      Alice and Bob.
 
   * [multibases](multibases/README.md) - Composing three variants (dev, staging, production) with a common base.
+
+  * [components](components.md) - Compose three variants (community, enterprise, dev) with a common base, by reusing configuration between them.

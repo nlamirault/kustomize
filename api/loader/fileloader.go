@@ -5,7 +5,10 @@ package loader
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -86,6 +89,9 @@ type fileLoader struct {
 	// File system utilities.
 	fSys filesys.FileSystem
 
+	// Used to load from HTTP
+	http *http.Client
+
 	// Used to clone repositories.
 	cloner git.Cloner
 
@@ -93,20 +99,18 @@ type fileLoader struct {
 	cleaner func() error
 }
 
-const CWD = "."
-
-// NewFileLoaderAtCwd returns a loader that loads from ".".
+// NewFileLoaderAtCwd returns a loader that loads from PWD.
 // A convenience for kustomize edit commands.
 func NewFileLoaderAtCwd(fSys filesys.FileSystem) *fileLoader {
 	return newLoaderOrDie(
-		RestrictionRootOnly, fSys, CWD)
+		RestrictionRootOnly, fSys, filesys.SelfDir)
 }
 
 // NewFileLoaderAtRoot returns a loader that loads from "/".
 // A convenience for tests.
 func NewFileLoaderAtRoot(fSys filesys.FileSystem) *fileLoader {
 	return newLoaderOrDie(
-		RestrictionRootOnly, fSys, string(filepath.Separator))
+		RestrictionRootOnly, fSys, filesys.Separator)
 }
 
 // Root returns the absolute path that is prepended to any
@@ -150,8 +154,7 @@ func demandDirectoryRoot(
 	}
 	d, f, err := fSys.CleanedAbs(path)
 	if err != nil {
-		return "", fmt.Errorf(
-			"absolute path error in '%s' : %v", path, err)
+		return "", err
 	}
 	if f != "" {
 		return "", fmt.Errorf(
@@ -167,15 +170,17 @@ func (fl *fileLoader) New(path string) (ifc.Loader, error) {
 	if path == "" {
 		return nil, fmt.Errorf("new root cannot be empty")
 	}
+
 	repoSpec, err := git.NewRepoSpecFromUrl(path)
 	if err == nil {
 		// Treat this as git repo clone request.
-		if err := fl.errIfRepoCycle(repoSpec); err != nil {
+		if err = fl.errIfRepoCycle(repoSpec); err != nil {
 			return nil, err
 		}
 		return newLoaderAtGitClone(
 			repoSpec, fl.fSys, fl, fl.cloner)
 	}
+
 	if filepath.IsAbs(path) {
 		return nil, fmt.Errorf("new root '%s' cannot be absolute", path)
 	}
@@ -183,10 +188,10 @@ func (fl *fileLoader) New(path string) (ifc.Loader, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := fl.errIfGitContainmentViolation(root); err != nil {
+	if err = fl.errIfGitContainmentViolation(root); err != nil {
 		return nil, err
 	}
-	if err := fl.errIfArgEqualOrHigher(root); err != nil {
+	if err = fl.errIfArgEqualOrHigher(root); err != nil {
 		return nil, err
 	}
 	return newLoaderAtConfirmedDir(
@@ -296,6 +301,24 @@ func (fl *fileLoader) errIfRepoCycle(newRepoSpec *git.RepoSpec) error {
 // else an error.  Relative paths are taken relative
 // to the root.
 func (fl *fileLoader) Load(path string) ([]byte, error) {
+	if u, err := url.Parse(path); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		var hc *http.Client
+		if fl.http != nil {
+			hc = fl.http
+		} else {
+			hc = &http.Client{}
+		}
+		resp, err := hc.Get(path)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return body, nil
+	}
 	if !filepath.IsAbs(path) {
 		path = fl.root.Join(path)
 	}

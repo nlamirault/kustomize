@@ -1,9 +1,9 @@
 [base]: ../../docs/glossary.md#base
-[config]: https://github.com/kinflate/example-hello
+[config]: https://github.com/kubernetes-sigs/kustomize/tree/master/examples/helloWorld
 [gitops]: ../../docs/glossary.md#gitops
 [hello]: https://github.com/monopole/hello
 [kustomization]: ../../docs/glossary.md#kustomization
-[original]: https://github.com/kinflate/example-hello
+[original]: https://github.com/kubernetes-sigs/kustomize/tree/master/examples/helloWorld
 [overlay]: ../../docs/glossary.md#overlay
 [overlays]: ../../docs/glossary.md#overlay
 [patch]: ../../docs/glossary.md#patch
@@ -51,7 +51,7 @@ curl -s -o "$BASE/#1.yaml" "https://raw.githubusercontent.com\
 
 观察该目录：
 
-<!-- @runTree @testAgainstLatestRelease -->
+<!-- @runTree -->
 ```
 tree $DEMO_HOME
 ```
@@ -210,7 +210,7 @@ EOF
 
 查看目录结构和差异：
 
-<!-- @listFiles @testAgainstLatestRelease -->
+<!-- @listFiles -->
 ```
 tree $DEMO_HOME
 ```

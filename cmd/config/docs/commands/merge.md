@@ -1,10 +1,10 @@
 ## merge
 
-Merge Resource configuration files
+[Alpha] Merge Resource configuration files
 
 ### Synopsis
 
-Merge Resource configuration files
+[Alpha] Merge Resource configuration files
 
 Merge reads Kubernetes Resource yaml configuration files from stdin or sources packages and write
 the result to stdout or a destination package.
@@ -17,8 +17,8 @@ earlier are lower-precedence (the destination).
 
 For information on merge rules, run:
 
-	kyaml docs merge
+	kustomize cfg docs merge
 
 ### Examples
 
-    cat resources_and_patches.yaml | kyaml merge > merged_resources.yaml
+    cat resources_and_patches.yaml | kustomize cfg merge > merged_resources.yaml

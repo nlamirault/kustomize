@@ -30,4 +30,19 @@ const (
 
 	// A program name, for use in help, finding the XDG_CONFIG_DIR, etc.
 	ProgramName = "kustomize"
+
+	// ConfigAnnoDomain is configuration-related annotation namespace.
+	ConfigAnnoDomain = "config.kubernetes.io"
+
+	// If a resource has this annotation, kustomize will drop it.
+	IgnoredByKustomizeAnnotation = ConfigAnnoDomain + "/local-config"
+
+	// Label key that indicates the resources are built from Kustomize
+	ManagedbyLabelKey = "app.kubernetes.io/managed-by"
+
+	// An environment variable to turn on/off adding the ManagedByLabelKey
+	EnableManagedbyLabelEnv = "KUSTOMIZE_ENABLE_MANAGEDBY_LABEL"
+
+	// Label key that indicates the resources are validated by a validator
+	ValidatedByLabelKey = "validated-by"
 )

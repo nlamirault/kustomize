@@ -4,7 +4,7 @@
 
 这些示例默认 `kustomize` 在您的 `$PATH` 中。
 
-这些示例通过了 [pre-commit](../../travis/pre-commit.sh) 测试，并且应该与 HEAD 一起使用。
+这些示例通过了 [pre-commit](../../scripts/kyaml-pre-commit.sh) 测试，并且应该与 HEAD 一起使用。
 
 ```
 go get sigs.k8s.io/kustomize/v3/cmd/kustomize
@@ -38,24 +38,24 @@ go get sigs.k8s.io/kustomize/v3/cmd/kustomize
 
   - transformer 插件:
 
-    * [validation transformer](../validationTransformer/README.md) - 通过 transformer 验证资源。
+    * [validation transformer](validationTransformer.md) - 通过 transformer 验证资源。
 
   - 定制内建 transformer 配置
 
-    * [transformer configs](../transformerconfigs/README.md) - 自定义 transformer 配置。
+    * [transformer configs](transformerconfigs.md) - 自定义 transformer 配置。
 
 多 Variant 示例
 
  * [hello world](helloWorld.md) - 部署多个不同配置的 Hello World 服务。
 
- * [LDAP](../ldap/README.md) - 部署多个配置不同的 LDAP 服务。
+ * [LDAP](ldap.md) - 部署多个配置不同的 LDAP 服务。
 
- * [springboot](../springboot/README.md) - 从头开始创建一个 Spring Boot 项目的生产配置。
+ * [springboot](springboot.md) - 从头开始创建一个 Spring Boot 项目的生产配置。
 
- * [mySql](../mySql/README.md) - 从头开始创建一个 MySQL 的生产配置。
+ * [mySql](mysql.md) - 从头开始创建一个 MySQL 的生产配置。
 
- * [breakfast](../breakfast.md) - 给 Alice 和 Bob 定制一顿早餐 :)
+ * [breakfast](breakfast.md) - 给 Alice 和 Bob 定制一顿早餐 :)
 
- * [multibases](../multibases/README.md) - 使用相同的 base 生成三个 variants（dev，staging，production）。
+ * [multibases](multibases.md) - 使用相同的 base 生成三个 variants（dev，staging，production）。
 
 >声明：部分文档可能稍微滞后于英文版本，同步工作持续进行中

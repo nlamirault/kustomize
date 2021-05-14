@@ -10,13 +10,9 @@ import (
 )
 
 func TestHashTransformer(t *testing.T) {
-	tc := kusttest_test.NewPluginTestEnv(t).Set()
-	defer tc.Reset()
-
-	tc.BuildGoPlugin(
-		"builtin", "", "HashTransformer")
-
-	th := kusttest_test.NewKustTestHarnessAllowPlugins(t, "/app")
+	th := kusttest_test.MakeEnhancedHarness(t).
+		PrepBuiltin("HashTransformer")
+	defer th.Reset()
 
 	rm := th.LoadAndRunTransformer(`
 apiVersion: builtin
@@ -57,7 +53,7 @@ spec:
         image: nginx:1.7.9
 `)
 
-	th.AssertActualEqualsExpected(rm, `
+	th.AssertActualEqualsExpectedNoIdAnnotations(rm, `
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -4,8 +4,8 @@
 package builtins
 
 import (
+	"sigs.k8s.io/kustomize/api/filters/labels"
 	"sigs.k8s.io/kustomize/api/resmap"
-	"sigs.k8s.io/kustomize/api/transform"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 )
@@ -17,21 +17,20 @@ type LabelTransformerPlugin struct {
 }
 
 func (p *LabelTransformerPlugin) Config(
-	h *resmap.PluginHelpers, c []byte) (err error) {
+	_ *resmap.PluginHelpers, c []byte) (err error) {
 	p.Labels = nil
 	p.FieldSpecs = nil
 	return yaml.Unmarshal(c, p)
 }
 
 func (p *LabelTransformerPlugin) Transform(m resmap.ResMap) error {
-	t, err := transform.NewMapTransformer(
-		p.FieldSpecs,
-		p.Labels,
-	)
-	if err != nil {
-		return err
+	if len(p.Labels) == 0 {
+		return nil
 	}
-	return t.Transform(m)
+	return m.ApplyFilter(labels.Filter{
+		Labels:  p.Labels,
+		FsSlice: p.FieldSpecs,
+	})
 }
 
 func NewLabelTransformerPlugin() resmap.TransformerPlugin {

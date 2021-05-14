@@ -13,9 +13,294 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"sigs.k8s.io/kustomize/kyaml/kio"
 	. "sigs.k8s.io/kustomize/kyaml/kio/filters"
 	"sigs.k8s.io/kustomize/kyaml/kio/filters/testyaml"
+	"sigs.k8s.io/kustomize/kyaml/yaml"
 )
+
+func TestFormatInput_FixYaml1_1Compatibility(t *testing.T) {
+	y := `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foo
+  labels:
+    foo: on
+    foo2: hello1
+  annotations:
+    bar: 1
+    bar2: hello2
+spec:
+  template:
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.0.0
+        args:
+        - on
+        - 1
+        - hello
+        ports:
+        - name: http
+          targetPort: 80
+          containerPort: 80
+`
+
+	// keep the style on values that parse as non-string types
+	expected := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foo
+  labels:
+    foo: "on"
+    foo2: hello1
+  annotations:
+    bar: "1"
+    bar2: hello2
+spec:
+  template:
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.0.0
+        args:
+        - "on"
+        - "1"
+        - hello
+        ports:
+        - name: http
+          targetPort: 80
+          containerPort: 80
+`
+
+	buff := &bytes.Buffer{}
+	err := kio.Pipeline{
+		Inputs: []kio.Reader{&kio.ByteReader{Reader: strings.NewReader(y)}},
+		Filters: []kio.Filter{FormatFilter{
+			UseSchema: true,
+		}},
+		Outputs: []kio.Writer{kio.ByteWriter{Writer: buff}},
+	}.Execute()
+	assert.NoError(t, err)
+	assert.Equal(t, expected, buff.String())
+}
+
+func TestFormat_UnsortedInput_No_Schema(t *testing.T) {
+	y := `
+apiVersion: apps/v1
+spec:
+  template:
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.0.0
+        args:
+        - on
+        - 1
+        - hello
+        ports:
+        - name: http
+          targetPort: 80
+          containerPort: 80
+kind: Deployment
+metadata:
+  name: foo
+  labels:
+    foo: on
+    foo2: hello1
+  annotations:
+    bar: 1
+    bar2: hello2
+`
+
+	// keep the style on values that parse as non-string types
+	expected := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: foo
+  labels:
+    foo: on
+    foo2: hello1
+  annotations:
+    bar: 1
+    bar2: hello2
+spec:
+  template:
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.0.0
+        args:
+        - on
+        - 1
+        - hello
+        ports:
+        - name: http
+          targetPort: 80
+          containerPort: 80
+`
+
+	buff := &bytes.Buffer{}
+	err := kio.Pipeline{
+		Inputs:  []kio.Reader{&kio.ByteReader{Reader: strings.NewReader(y)}},
+		Filters: []kio.Filter{FormatFilter{}},
+		Outputs: []kio.Writer{kio.ByteWriter{Writer: buff}},
+	}.Execute()
+	assert.NoError(t, err)
+	assert.Equal(t, expected, buff.String())
+}
+
+func TestFormatInput_PostprocessStyle(t *testing.T) {
+	y := `
+apiVersion: v1
+kind: Foo
+metadata:
+  name: foo
+spec:
+  notBoolean: "true"
+  notBoolean2: "on"
+  isBoolean: on
+  isBoolean2: true
+  notInt: "12345"
+  isInt: 12345
+  isString1: hello world
+  isString2: "hello world"
+`
+
+	// keep the style on values that parse as non-string types
+	expected := `apiVersion: v1
+kind: Foo
+metadata:
+  name: foo
+spec:
+  isBoolean: on
+  isBoolean2: true
+  isInt: 12345
+  isString1: hello world
+  isString2: hello world
+  notBoolean: "true"
+  notBoolean2: "on"
+  notInt: "12345"
+`
+
+	buff := &bytes.Buffer{}
+	err := kio.Pipeline{
+		Inputs: []kio.Reader{&kio.ByteReader{Reader: strings.NewReader(y)}},
+		Filters: []kio.Filter{FormatFilter{
+			UseSchema: true,
+			Process: func(n *yaml.Node) error {
+				if yaml.IsYaml1_1NonString(n) {
+					// don't change these styles, they are important for backwards compatibility
+					// e.g. "on" must remain quoted, on must remain unquoted
+					return nil
+				}
+				// style does not have semantic meaning
+				n.Style = 0
+				return nil
+			}}},
+		Outputs: []kio.Writer{kio.ByteWriter{Writer: buff}},
+	}.Execute()
+	assert.NoError(t, err)
+	assert.Equal(t, expected, buff.String())
+
+	y = `
+apiVersion: v1
+kind: Foo
+metadata:
+  name: 'foo'
+spec:
+  notBoolean: "true"
+  notBoolean2: "on"
+  notBoolean3: y is yes
+  isBoolean: on
+  isBoolean2: true
+  isBoolean3: y
+  notInt2: 1234 five
+  notInt3: one 2345
+  notInt: "12345"
+  isInt1: 12345
+  isInt2: -12345
+  isFloat1: 1.1234
+  isFloat2: 1.1234
+  isString1: hello world
+  isString2: "hello world"
+  isString3: 'hello world'
+`
+
+	// keep the style on values that parse as non-string types
+	expected = `apiVersion: 'v1'
+kind: 'Foo'
+metadata:
+  name: 'foo'
+spec:
+  isBoolean: on
+  isBoolean2: true
+  isBoolean3: y
+  isFloat1: 1.1234
+  isFloat2: 1.1234
+  isInt1: 12345
+  isInt2: -12345
+  isString1: 'hello world'
+  isString2: 'hello world'
+  isString3: 'hello world'
+  notBoolean: "true"
+  notBoolean2: "on"
+  notBoolean3: 'y is yes'
+  notInt: "12345"
+  notInt2: '1234 five'
+  notInt3: 'one 2345'
+`
+
+	buff = &bytes.Buffer{}
+	err = kio.Pipeline{
+		Inputs: []kio.Reader{&kio.ByteReader{Reader: strings.NewReader(y)}},
+		Filters: []kio.Filter{FormatFilter{
+			UseSchema: true,
+			Process: func(n *yaml.Node) error {
+				if yaml.IsYaml1_1NonString(n) {
+					// don't change these styles, they are important for backwards compatibility
+					// e.g. "on" must remain quoted, on must remain unquoted
+					return nil
+				}
+				// style does not have semantic meaning
+				n.Style = yaml.SingleQuotedStyle
+				return nil
+			}}},
+		Outputs: []kio.Writer{kio.ByteWriter{Writer: buff}},
+	}.Execute()
+	assert.NoError(t, err)
+	assert.Equal(t, expected, buff.String())
+}
+
+func TestFormatInput_Style(t *testing.T) {
+	y := `
+apiVersion: v1
+kind: Foo
+metadata:
+  name: foo
+spec:
+  notBoolean: "true"
+  notBoolean2: "on"
+  isBoolean: on
+  isBoolean2: true
+`
+
+	expected := `apiVersion: v1
+kind: Foo
+metadata:
+  name: foo
+spec:
+  isBoolean: on
+  isBoolean2: true
+  notBoolean: "true"
+  notBoolean2: "on"
+`
+
+	s, err := FormatInput(strings.NewReader(y))
+	assert.NoError(t, err)
+	assert.Equal(t, expected, s.String())
+}
 
 // TestFormatInput_configMap verifies a ConfigMap yaml is formatted correctly
 func TestFormatInput_configMap(t *testing.T) {
@@ -126,8 +411,8 @@ spec:
         app: nginx
     spec:
       containers:
-      - # this is another container
-        name: a-nginx
+      # this is another container
+      - name: a-nginx
         image: nginx:1.7.9
         ports:
         - containerPort: 80
@@ -145,7 +430,6 @@ spec:
 
 // TestFormatInput_service verifies a Service yaml is formatted correctly
 func TestFormatInput_service(t *testing.T) {
-
 	y := `
 apiVersion: v1
 kind: Service
@@ -178,9 +462,8 @@ spec:
 
 // TestFormatInput_service verifies a Service yaml is formatted correctly
 func TestFormatInput_validatingWebhookConfiguration(t *testing.T) {
-
 	y := `
-apiVersion: admissionregistration.k8s.io/v1beta1
+apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: <name of this configuration object>
@@ -207,7 +490,7 @@ webhooks:
   - v1beta1
   timeoutSeconds: 1
 `
-	expected := `apiVersion: admissionregistration.k8s.io/v1beta1
+	expected := `apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: <name of this configuration object>
@@ -231,7 +514,7 @@ webhooks:
     - CONNECT
     - CREATE
     - UPDATE # this list is indented by 2
-    scope: Namespaced
+    scope: "Namespaced"
   timeoutSeconds: 1
 `
 	s, err := FormatInput(strings.NewReader(y))
@@ -295,6 +578,10 @@ func TestFormatInput_resources(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = io.Copy(input, bytes.NewReader(testyaml.UnformattedYaml2))
 	assert.NoError(t, err)
+	_, err = io.Copy(input, strings.NewReader("---\n"))
+	assert.NoError(t, err)
+	_, err = io.Copy(input, bytes.NewReader(testyaml.UnformattedYaml3))
+	assert.NoError(t, err)
 
 	expectedOutput := &bytes.Buffer{}
 	_, err = io.Copy(expectedOutput, bytes.NewReader(testyaml.FormattedYaml1))
@@ -302,6 +589,10 @@ func TestFormatInput_resources(t *testing.T) {
 	_, err = io.Copy(expectedOutput, strings.NewReader("---\n"))
 	assert.NoError(t, err)
 	_, err = io.Copy(expectedOutput, bytes.NewReader(testyaml.FormattedYaml2))
+	assert.NoError(t, err)
+	_, err = io.Copy(expectedOutput, strings.NewReader("---\n"))
+	assert.NoError(t, err)
+	_, err = io.Copy(expectedOutput, bytes.NewReader(testyaml.FormattedYaml3))
 	assert.NoError(t, err)
 
 	s, err := FormatInput(input)
@@ -459,7 +750,7 @@ func TestFormatFileOrDirectory_YamlExtFileWithJson(t *testing.T) {
 	f, err := ioutil.TempFile("", "yamlfmt*.yaml")
 	assert.NoError(t, err)
 	defer os.Remove(f.Name())
-	err = ioutil.WriteFile(f.Name(), testyaml.UnformattedJson1, 0600)
+	err = ioutil.WriteFile(f.Name(), testyaml.UnformattedJSON1, 0600)
 	assert.NoError(t, err)
 
 	// format the file
@@ -469,7 +760,7 @@ func TestFormatFileOrDirectory_YamlExtFileWithJson(t *testing.T) {
 	// check the result is formatted as yaml
 	b, err := ioutil.ReadFile(f.Name())
 	assert.NoError(t, err)
-	assert.Equal(t, string(testyaml.FormattedYaml1), string(b))
+	assert.Equal(t, string(testyaml.FormattedJSON1), string(b))
 }
 
 // TestFormatFileOrDirectory_partialKubernetesYamlFile verifies that if a yaml file contains both
@@ -620,4 +911,119 @@ func TestFormatFileOrDirectory_trimWhiteSpace(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, string(testyaml.FormattedYaml1), string(b))
+}
+
+func TestFormatFileOrDirectory_FmtAnnotation(t *testing.T) {
+	testCases := []struct {
+		name           string
+		input          []byte
+		expectedOutput []byte
+		expectError    bool
+	}{
+		{
+			name:           "no formatting annotation",
+			input:          testyaml.UnformattedYaml1,
+			expectedOutput: testyaml.FormattedYaml1,
+		},
+		{
+			name: "formatting strategy none",
+			input: []byte(`
+spec: a
+status:
+  conditions:
+  - 3
+  - 1
+  - 2
+apiVersion: example.com/v1beta1
+kind: MyType
+metadata:
+  annotations:
+    config.kubernetes.io/formatting: none
+`),
+			expectedOutput: []byte(`
+spec: a
+status:
+  conditions:
+  - 3
+  - 1
+  - 2
+apiVersion: example.com/v1beta1
+kind: MyType
+metadata:
+  annotations:
+    config.kubernetes.io/formatting: none
+`),
+		},
+		{
+			name: "formatting strategy standard",
+			input: []byte(`
+spec: a
+status:
+  conditions:
+  - 3
+  - 1
+  - 2
+apiVersion: example.com/v1beta1
+kind: MyType
+metadata:
+  annotations:
+    config.kubernetes.io/formatting: standard
+`),
+			expectedOutput: []byte(`
+apiVersion: example.com/v1beta1
+kind: MyType
+metadata:
+  annotations:
+    config.kubernetes.io/formatting: standard
+spec: a
+status:
+  conditions:
+  - 3
+  - 1
+  - 2
+`),
+		},
+		{
+			name: "unknown formatting strategy",
+			input: []byte(`
+spec: a
+status:
+  conditions:
+  - 3
+  - 1
+  - 2
+apiVersion: example.com/v1beta1
+kind: MyType
+metadata:
+  annotations:
+    config.kubernetes.io/formatting: unknown
+`),
+			expectError: true,
+		},
+	}
+
+	for i := range testCases {
+		test := testCases[i]
+		t.Run(test.name, func(t *testing.T) {
+			f, err := ioutil.TempFile("", "yamlfmt*.yaml")
+			assert.NoError(t, err)
+			defer os.Remove(f.Name())
+
+			err = ioutil.WriteFile(f.Name(), test.input, 0600)
+			assert.NoError(t, err)
+
+			err = FormatFileOrDirectory(f.Name())
+			if test.expectError {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+
+			b, err := ioutil.ReadFile(f.Name())
+			assert.NoError(t, err)
+
+			assert.Equal(t, strings.TrimSpace(string(test.expectedOutput)),
+				strings.TrimSpace(string(b)))
+		})
+	}
 }

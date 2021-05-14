@@ -1,10 +1,10 @@
 ## grep
 
-Search for matching Resources in a directory or from stdin
+[Alpha] Search for matching Resources in a directory or from stdin
 
 ### Synopsis
 
-  Search for matching Resources in a directory or from stdin.
+[Alpha] Search for matching Resources in a directory or from stdin.
 
   QUERY:
     Query to match expressed as 'path.to.field=value'.
@@ -19,13 +19,13 @@ Search for matching Resources in a directory or from stdin
 ### Examples
 
     # find Deployment Resources
-    kyaml grep "kind=Deployment" my-dir/
-    
+    kustomize cfg grep "kind=Deployment" my-dir/
+
     # find Resources named nginx
-    kyaml grep "metadata.name=nginx" my-dir/
-    
+    kustomize cfg grep "metadata.name=nginx" my-dir/
+
     # use tree to display matching Resources
-    kyaml grep "metadata.name=nginx" my-dir/ | kyaml tree
-    
+    kustomize cfg grep "metadata.name=nginx" my-dir/ | kustomize cfg tree
+
     # look for Resources matching a specific container image
-    kyaml grep "spec.template.spec.containers[name=nginx].image=nginx:1\.7\.9" my-dir/ | kyaml tree
+    kustomize cfg grep "spec.template.spec.containers[name=nginx].image=nginx:1\.7\.9" my-dir/ | kustomize cfg tree

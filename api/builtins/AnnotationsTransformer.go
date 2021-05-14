@@ -4,8 +4,8 @@
 package builtins
 
 import (
+	"sigs.k8s.io/kustomize/api/filters/annotations"
 	"sigs.k8s.io/kustomize/api/resmap"
-	"sigs.k8s.io/kustomize/api/transform"
 	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/yaml"
 )
@@ -17,21 +17,20 @@ type AnnotationsTransformerPlugin struct {
 }
 
 func (p *AnnotationsTransformerPlugin) Config(
-	h *resmap.PluginHelpers, c []byte) (err error) {
+	_ *resmap.PluginHelpers, c []byte) (err error) {
 	p.Annotations = nil
 	p.FieldSpecs = nil
 	return yaml.Unmarshal(c, p)
 }
 
 func (p *AnnotationsTransformerPlugin) Transform(m resmap.ResMap) error {
-	t, err := transform.NewMapTransformer(
-		p.FieldSpecs,
-		p.Annotations,
-	)
-	if err != nil {
-		return err
+	if len(p.Annotations) == 0 {
+		return nil
 	}
-	return t.Transform(m)
+	return m.ApplyFilter(annotations.Filter{
+		Annotations: p.Annotations,
+		FsSlice:     p.FieldSpecs,
+	})
 }
 
 func NewAnnotationsTransformerPlugin() resmap.TransformerPlugin {

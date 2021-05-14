@@ -1,12 +1,12 @@
-## run-fns
+## run
 
-Apply config functions to Resources.
+[Alpha] Reoncile config functions to Resources.
 
 ### Synopsis
 
-Apply config functions to Resources.
+[Alpha] Reconcile config functions to Resources.
 
-run-fns sequentially invokes all config functions in the directly, providing Resources
+run sequentially invokes all config functions in the directory, providing Resources
 in the directory as input to the first function, and writing the output of the last
 function back to the directory.
 
@@ -22,8 +22,8 @@ order they appear in the file).
 
 #### Config Functions:
 
-  Config functions are specified as Kubernetes types containing a metadata.configFn.container.image
-  field.  This fields tells run-fns how to invoke the container.
+  Config functions are specified as Kubernetes types containing a metadata.annotations.[config.kubernetes.io/function]
+  field specifying an image for the container to run.  This image tells run how to invoke the container.
 
   Example config function:
 
@@ -31,23 +31,23 @@ order they appear in the file).
 	apiVersion: fn.example.com/v1beta1
 	kind: ExampleFunctionKind
 	metadata:
-	  configFn:
-	    container:
-	      # function is invoked as a container running this image
-	      image: gcr.io/example/examplefunction:v1.0.1
 	  annotations:
+	    config.kubernetes.io/function: |
+	      container:
+	        # function is invoked as a container running this image
+	        image: gcr.io/example/examplefunction:v1.0.1
 	    config.kubernetes.io/local-config: "true" # tools should ignore this
 	spec:
 	  configField: configValue
 
-  In the preceding example, 'kyaml run-fns example/' would identify the function by
-  the metadata.configFn field.  It would then write all Resources in the directory to
+  In the preceding example, 'kustomize fn run example/' would identify the function by
+  the metadata.annotations.[config.kubernetes.io/function] field.  It would then write all Resources in the directory to
   a container stdin (running the gcr.io/example/examplefunction:v1.0.1 image).  It
-  would then writer the container stdout back to example/, replacing the directory
+  would then write the container stdout back to example/, replacing the directory
   file contents.
 
-  See `kyaml help docs-fn` for more details on writing functions.
+  See `kustomize help cfg docs-fn` for more details on writing functions.
 
 ### Examples
 
-kyaml run-fns example/
+kustomize fn run example/

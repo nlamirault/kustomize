@@ -4,6 +4,7 @@
 package merge3
 
 import (
+	"sigs.k8s.io/kustomize/kyaml/openapi"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 	"sigs.k8s.io/kustomize/kyaml/yaml/walk"
 )
@@ -17,8 +18,8 @@ const (
 
 type Visitor struct{}
 
-func (m Visitor) VisitMap(nodes walk.Sources) (*yaml.RNode, error) {
-	if yaml.IsNull(nodes.Updated()) || yaml.IsNull(nodes.Dest()) {
+func (m Visitor) VisitMap(nodes walk.Sources, s *openapi.ResourceSchema) (*yaml.RNode, error) {
+	if nodes.Updated().IsTaggedNull() || nodes.Dest().IsTaggedNull() {
 		// explicitly cleared from either dest or update
 		return walk.ClearNode, nil
 	}
@@ -32,16 +33,17 @@ func (m Visitor) VisitMap(nodes walk.Sources) (*yaml.RNode, error) {
 		// initialize a new value that can be recursively merged
 		return yaml.NewRNode(&yaml.Node{Kind: yaml.MappingNode}), nil
 	}
+
 	// recursively merge the dest with the original and updated
 	return nodes.Dest(), nil
 }
 
-func (m Visitor) visitAList(nodes walk.Sources) (*yaml.RNode, error) {
-	if yaml.IsEmpty(nodes.Updated()) && !yaml.IsEmpty(nodes.Origin()) {
+func (m Visitor) visitAList(nodes walk.Sources, _ *openapi.ResourceSchema) (*yaml.RNode, error) {
+	if yaml.IsMissingOrNull(nodes.Updated()) && !yaml.IsMissingOrNull(nodes.Origin()) {
 		// implicitly cleared from update -- element was deleted
 		return walk.ClearNode, nil
 	}
-	if yaml.IsEmpty(nodes.Dest()) {
+	if yaml.IsMissingOrNull(nodes.Dest()) {
 		// not cleared, but missing from the dest
 		// initialize a new value that can be recursively merged
 		return yaml.NewRNode(&yaml.Node{Kind: yaml.SequenceNode}), nil
@@ -51,18 +53,28 @@ func (m Visitor) visitAList(nodes walk.Sources) (*yaml.RNode, error) {
 	return nodes.Dest(), nil
 }
 
-func (m Visitor) VisitScalar(nodes walk.Sources) (*yaml.RNode, error) {
-	if yaml.IsNull(nodes.Updated()) || yaml.IsNull(nodes.Dest()) {
+func (m Visitor) VisitScalar(nodes walk.Sources, s *openapi.ResourceSchema) (*yaml.RNode, error) {
+	if nodes.Updated().IsTaggedNull() || nodes.Dest().IsTaggedNull() {
 		// explicitly cleared from either dest or update
 		return nil, nil
 	}
-	if yaml.IsEmpty(nodes.Updated()) != yaml.IsEmpty(nodes.Origin()) {
+	if yaml.IsMissingOrNull(nodes.Updated()) != yaml.IsMissingOrNull(nodes.Origin()) {
 		// value added or removed in update
 		return nodes.Updated(), nil
 	}
-	if yaml.IsEmpty(nodes.Updated()) && yaml.IsEmpty(nodes.Origin()) {
+	if yaml.IsMissingOrNull(nodes.Updated()) && yaml.IsMissingOrNull(nodes.Origin()) {
 		// value added or removed in update
 		return nodes.Dest(), nil
+	}
+
+	values, err := m.getStrValues(nodes)
+	if err != nil {
+		return nil, err
+	}
+
+	if (values.Dest == "" || values.Dest == values.Origin) && values.Origin != values.Update {
+		// if local is nil or is unchanged but there is new update
+		return nodes.Updated(), nil
 	}
 
 	if nodes.Updated().YNode().Value != nodes.Origin().YNode().Value {
@@ -75,16 +87,16 @@ func (m Visitor) VisitScalar(nodes walk.Sources) (*yaml.RNode, error) {
 }
 
 func (m Visitor) visitNAList(nodes walk.Sources) (*yaml.RNode, error) {
-	if yaml.IsNull(nodes.Updated()) || yaml.IsNull(nodes.Dest()) {
+	if nodes.Updated().IsTaggedNull() || nodes.Dest().IsTaggedNull() {
 		// explicitly cleared from either dest or update
 		return walk.ClearNode, nil
 	}
 
-	if yaml.IsEmpty(nodes.Updated()) != yaml.IsEmpty(nodes.Origin()) {
+	if yaml.IsMissingOrNull(nodes.Updated()) != yaml.IsMissingOrNull(nodes.Origin()) {
 		// value added or removed in update
 		return nodes.Updated(), nil
 	}
-	if yaml.IsEmpty(nodes.Updated()) && yaml.IsEmpty(nodes.Origin()) {
+	if yaml.IsMissingOrNull(nodes.Updated()) && yaml.IsMissingOrNull(nodes.Origin()) {
 		// value not present in source or dest
 		return nodes.Dest(), nil
 	}
@@ -103,9 +115,9 @@ func (m Visitor) visitNAList(nodes walk.Sources) (*yaml.RNode, error) {
 	return nodes.Dest(), nil
 }
 
-func (m Visitor) VisitList(nodes walk.Sources, kind walk.ListKind) (*yaml.RNode, error) {
+func (m Visitor) VisitList(nodes walk.Sources, s *openapi.ResourceSchema, kind walk.ListKind) (*yaml.RNode, error) {
 	if kind == walk.AssociativeList {
-		return m.visitAList(nodes)
+		return m.visitAList(nodes, s)
 	}
 	// non-associative list
 	return m.visitNAList(nodes)
@@ -135,7 +147,6 @@ func (m Visitor) getStrValues(nodes walk.Sources) (strValues, error) {
 		if err != nil {
 			return strValues{}, err
 		}
-
 	}
 	if nodes.Dest() != nil && nodes.Dest().YNode() != nil {
 		s := nodes.Dest().YNode().Style

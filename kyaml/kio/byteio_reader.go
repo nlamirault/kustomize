@@ -17,7 +17,7 @@ import (
 
 const (
 	ResourceListKind       = "ResourceList"
-	ResourceListApiVersion = "config.kubernetes.io/v1alpha1"
+	ResourceListAPIVersion = "config.kubernetes.io/v1alpha1"
 )
 
 // ByteReadWriter reads from an input and writes to an output.
@@ -41,7 +41,10 @@ type ByteReadWriter struct {
 
 	FunctionConfig *yaml.RNode
 
-	WrappingApiVersion string
+	Results *yaml.RNode
+
+	NoWrap             bool
+	WrappingAPIVersion string
 	WrappingKind       string
 }
 
@@ -51,9 +54,15 @@ func (rw *ByteReadWriter) Read() ([]*yaml.RNode, error) {
 		OmitReaderAnnotations: rw.OmitReaderAnnotations,
 	}
 	val, err := b.Read()
-	rw.FunctionConfig = b.FunctionConfig
-	rw.WrappingApiVersion = b.WrappingApiVersion
-	rw.WrappingKind = b.WrappingKind
+	if rw.FunctionConfig == nil {
+		rw.FunctionConfig = b.FunctionConfig
+	}
+	rw.Results = b.Results
+
+	if !rw.NoWrap {
+		rw.WrappingAPIVersion = b.WrappingAPIVersion
+		rw.WrappingKind = b.WrappingKind
+	}
 	return val, errors.Wrap(err)
 }
 
@@ -63,9 +72,32 @@ func (rw *ByteReadWriter) Write(nodes []*yaml.RNode) error {
 		KeepReaderAnnotations: rw.KeepReaderAnnotations,
 		Style:                 rw.Style,
 		FunctionConfig:        rw.FunctionConfig,
-		WrappingApiVersion:    rw.WrappingApiVersion,
+		Results:               rw.Results,
+		WrappingAPIVersion:    rw.WrappingAPIVersion,
 		WrappingKind:          rw.WrappingKind,
 	}.Write(nodes)
+}
+
+// ParseAll reads all of the inputs into resources
+func ParseAll(inputs ...string) ([]*yaml.RNode, error) {
+	return (&ByteReader{
+		Reader: bytes.NewBufferString(strings.Join(inputs, "\n---\n")),
+	}).Read()
+}
+
+// FromBytes reads from a byte slice.
+func FromBytes(bs []byte) ([]*yaml.RNode, error) {
+	return (&ByteReader{
+		OmitReaderAnnotations: true,
+		Reader:                bytes.NewBuffer(bs),
+	}).Read()
+}
+
+// StringAll writes all of the resources to a string
+func StringAll(resources []*yaml.RNode) (string, error) {
+	var b bytes.Buffer
+	err := (&ByteWriter{Writer: &b}).Write(resources)
+	return b.String(), err
 }
 
 // ByteReader decodes ResourceNodes from bytes.
@@ -85,12 +117,14 @@ type ByteReader struct {
 
 	FunctionConfig *yaml.RNode
 
+	Results *yaml.RNode
+
 	// DisableUnwrapping prevents Resources in Lists and ResourceLists from being unwrapped
 	DisableUnwrapping bool
 
-	// WrappingApiVersion is set by Read(), and is the apiVersion of the object that
+	// WrappingAPIVersion is set by Read(), and is the apiVersion of the object that
 	// the read objects were originally wrapped in.
-	WrappingApiVersion string
+	WrappingAPIVersion string
 
 	// WrappingKind is set by Read(), and is the kind of the object that
 	// the read objects were originally wrapped in.
@@ -109,10 +143,17 @@ func (r *ByteReader) Read() ([]*yaml.RNode, error) {
 	if err != nil {
 		return nil, errors.Wrap(err)
 	}
-	values := strings.Split(input.String(), "\n---\n")
+
+	// replace the ending \r\n (line ending used in windows) with \n and then separate by \n---\n
+	values := strings.Split(strings.ReplaceAll(input.String(), "\r\n", "\n"), "\n---\n")
 
 	index := 0
 	for i := range values {
+		// the Split used above will eat the tail '\n' from each resource. This may affect the
+		// literal string value since '\n' is meaningful in it.
+		if i != len(values)-1 {
+			values[i] += "\n"
+		}
 		decoder := yaml.NewDecoder(bytes.NewBufferString(values[i]))
 		node, err := r.decode(index, decoder)
 		if err == io.EOF {
@@ -137,15 +178,16 @@ func (r *ByteReader) Read() ([]*yaml.RNode, error) {
 		if !r.DisableUnwrapping &&
 			len(values) == 1 && // Only unwrap if there is only 1 value
 			(meta.Kind == ResourceListKind || meta.Kind == "List") &&
-			node.Field("items") != nil {
-
+			(node.Field("items") != nil || node.Field("functionConfig") != nil) {
 			r.WrappingKind = meta.Kind
-			r.WrappingApiVersion = meta.ApiVersion
+			r.WrappingAPIVersion = meta.APIVersion
 
 			// unwrap the list
-			fc := node.Field("functionConfig")
-			if fc != nil {
+			if fc := node.Field("functionConfig"); fc != nil {
 				r.FunctionConfig = fc.Value
+			}
+			if res := node.Field("results"); res != nil {
+				r.Results = res.Value
 			}
 
 			items := node.Field("items")
@@ -154,7 +196,6 @@ func (r *ByteReader) Read() ([]*yaml.RNode, error) {
 					// add items
 					output = append(output, yaml.NewRNode(items.Value.Content()[i]))
 				}
-
 			}
 			continue
 		}
@@ -168,12 +209,6 @@ func (r *ByteReader) Read() ([]*yaml.RNode, error) {
 	return output, nil
 }
 
-func isEmptyDocument(node *yaml.Node) bool {
-	// node is a Document with no content -- e.g. "---\n---"
-	return node.Kind == yaml.DocumentNode &&
-		node.Content[0].Tag == yaml.NullNodeTag
-}
-
 func (r *ByteReader) decode(index int, decoder *yaml.Decoder) (*yaml.RNode, error) {
 	node := &yaml.Node{}
 	err := decoder.Decode(node)
@@ -184,7 +219,7 @@ func (r *ByteReader) decode(index int, decoder *yaml.Decoder) (*yaml.RNode, erro
 		return nil, errors.Wrap(err)
 	}
 
-	if isEmptyDocument(node) {
+	if yaml.IsYNodeEmptyDoc(node) {
 		return nil, nil
 	}
 

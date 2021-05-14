@@ -12,18 +12,18 @@ linters:
     - bodyclose
     - deadcode
     - depguard
-    - dogsled
+#    - dogsled
     - dupl
 #    - errcheck
 #    - funlen
 #    - gochecknoinits
 #    - goconst
 #    - gocritic
-    - gocyclo
+#    - gocyclo
     - gofmt
     - goimports
 #    - golint
-    - gosec
+#    - gosec
     - gosimple
     - govet
     - ineffassign

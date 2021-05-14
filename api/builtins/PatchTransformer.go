@@ -5,9 +5,10 @@ package builtins
 
 import (
 	"fmt"
+	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	"github.com/pkg/errors"
+	"sigs.k8s.io/kustomize/api/filters/patchjson6902"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
@@ -20,102 +21,101 @@ type PatchTransformerPlugin struct {
 	Path         string          `json:"path,omitempty" yaml:"path,omitempty"`
 	Patch        string          `json:"patch,omitempty" yaml:"patch,omitempty"`
 	Target       *types.Selector `json:"target,omitempty" yaml:"target,omitempty"`
+	Options      map[string]bool `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
 func (p *PatchTransformerPlugin) Config(
-	h *resmap.PluginHelpers, c []byte) (err error) {
-	err = yaml.Unmarshal(c, p)
+	h *resmap.PluginHelpers, c []byte) error {
+	err := yaml.Unmarshal(c, p)
 	if err != nil {
 		return err
 	}
+	p.Patch = strings.TrimSpace(p.Patch)
 	if p.Patch == "" && p.Path == "" {
-		err = fmt.Errorf(
+		return fmt.Errorf(
 			"must specify one of patch and path in\n%s", string(c))
-		return
 	}
 	if p.Patch != "" && p.Path != "" {
-		err = fmt.Errorf(
+		return fmt.Errorf(
 			"patch and path can't be set at the same time\n%s", string(c))
-		return
 	}
-	var in []byte
 	if p.Path != "" {
-		in, err = h.Loader().Load(p.Path)
-		if err != nil {
-			return
+		loaded, loadErr := h.Loader().Load(p.Path)
+		if loadErr != nil {
+			return loadErr
 		}
-	}
-	if p.Patch != "" {
-		in = []byte(p.Patch)
+		p.Patch = string(loaded)
 	}
 
-	patchSM, errSM := h.ResmapFactory().RF().FromBytes(in)
-	patchJson, errJson := jsonPatchFromBytes(in)
+	patchSM, errSM := h.ResmapFactory().RF().FromBytes([]byte(p.Patch))
+	patchJson, errJson := jsonPatchFromBytes([]byte(p.Patch))
+	if (errSM == nil && errJson == nil) ||
+		(patchSM != nil && patchJson != nil) {
+		return fmt.Errorf(
+			"illegally qualifies as both an SM and JSON patch: [%v]",
+			p.Patch)
+	}
 	if errSM != nil && errJson != nil {
-		err = fmt.Errorf(
-			"unable to get either a Strategic Merge Patch or JSON patch 6902 from %s", p.Patch)
-		return
+		return fmt.Errorf(
+			"unable to parse SM or JSON patch from [%v]", p.Patch)
 	}
-	if errSM == nil && errJson != nil {
+	if errSM == nil {
 		p.loadedPatch = patchSM
-	}
-	if errJson == nil && errSM != nil {
+		if p.Options["allowNameChange"] {
+			p.loadedPatch.AllowNameChange()
+		}
+		if p.Options["allowKindChange"] {
+			p.loadedPatch.AllowKindChange()
+		}
+	} else {
 		p.decodedPatch = patchJson
 	}
-	if patchSM != nil && patchJson != nil {
-		err = fmt.Errorf(
-			"a patch can't be both a Strategic Merge Patch and JSON patch 6902 %s", p.Patch)
-	}
-
 	return nil
 }
 
 func (p *PatchTransformerPlugin) Transform(m resmap.ResMap) error {
-	if p.loadedPatch != nil && p.Target == nil {
-		target, err := m.GetById(p.loadedPatch.OrgId())
-		if err != nil {
-			return err
-		}
-		err = target.Patch(p.loadedPatch.Kunstructured)
-		if err != nil {
-			return err
-		}
-		return nil
+	if p.loadedPatch == nil {
+		return p.transformJson6902(m, p.decodedPatch)
 	}
+	// The patch was a strategic merge patch
+	return p.transformStrategicMerge(m, p.loadedPatch)
+}
 
+// transformStrategicMerge applies the provided strategic merge patch
+// to all the resources in the ResMap that match either the Target or
+// the identifier of the patch.
+func (p *PatchTransformerPlugin) transformStrategicMerge(m resmap.ResMap, patch *resource.Resource) error {
+	if p.Target == nil {
+		target, err := m.GetById(patch.OrgId())
+		if err != nil {
+			return err
+		}
+		return target.ApplySmPatch(patch)
+	}
+	selected, err := m.Select(*p.Target)
+	if err != nil {
+		return err
+	}
+	return m.ApplySmPatch(resource.MakeIdSet(selected), patch)
+}
+
+// transformJson6902 applies the provided json6902 patch
+// to all the resources in the ResMap that match the Target.
+func (p *PatchTransformerPlugin) transformJson6902(m resmap.ResMap, patch jsonpatch.Patch) error {
 	if p.Target == nil {
 		return fmt.Errorf("must specify a target for patch %s", p.Patch)
 	}
-
 	resources, err := m.Select(*p.Target)
 	if err != nil {
 		return err
 	}
 	for _, res := range resources {
-		if p.decodedPatch != nil {
-			rawObj, err := res.MarshalJSON()
-			if err != nil {
-				return err
-			}
-			modifiedObj, err := p.decodedPatch.Apply(rawObj)
-			if err != nil {
-				return errors.Wrapf(
-					err, "failed to apply json patch '%s'", p.Patch)
-			}
-			err = res.UnmarshalJSON(modifiedObj)
-			if err != nil {
-				return err
-			}
-		}
-		if p.loadedPatch != nil {
-			patchCopy := p.loadedPatch.DeepCopy()
-			patchCopy.SetName(res.GetName())
-			patchCopy.SetNamespace(res.GetNamespace())
-			patchCopy.SetGvk(res.GetGvk())
-			err = res.Patch(patchCopy.Kunstructured)
-			if err != nil {
-				return err
-			}
+		res.StorePreviousId()
+		err = res.ApplyFilter(patchjson6902.Filter{
+			Patch: p.Patch,
+		})
+		if err != nil {
+			return err
 		}
 	}
 	return nil
